@@ -1,244 +1,135 @@
-use anyhow::Context;
-use anyhow::Result;
-use fantoccini::{Client, ClientBuilder, Locator};
-use image::GenericImageView;
-use serde_json::{json, Value};
-use std::fs::File;
-use std::io::Write;
-use std::time::Duration;
-use tokio::io::{self, AsyncBufReadExt, BufReader};
-use tokio::time::sleep;
+mod bonk_bot;
+mod discord_commands;
+
+use anyhow::{Context, Result};
+use bonk_bot::{BonkBotKey, BonkBotValue};
+use dotenv;
+use serenity::{
+    all::{
+        ActivityData, Command, CommandInteraction, CreateCommand, CreateCommandOption,
+        CreateInteractionResponse, CreateInteractionResponseMessage, EventHandler, GatewayIntents,
+        Interaction, Ready,
+    },
+    async_trait,
+};
+
+struct Handler;
+
+#[async_trait]
+impl EventHandler for Handler {
+    async fn ready(&self, ctx: serenity::all::Context, _ready: Ready) {
+        // if let Ok(commands) = Command::get_global_commands(&ctx.http).await {
+        //     dbg!(commands);
+        // }
+        // let res =
+        //     Command::delete_global_command(&ctx.http, CommandId::new(/*id*/)).await;
+        // if let Err(res) = res {
+        //     println!("{:?}", res);
+        // }
+
+        let activity = ActivityData::playing("bonk.io /sgr help");
+        ctx.set_activity(Some(activity));
+
+        if let Err(e) = Command::create_global_command(
+            &ctx.http,
+            CreateCommand::new("sgr")
+                .description("A command prefix")
+                .add_option(CreateCommandOption::new(
+                    serenity::all::CommandOptionType::String,
+                    "command",
+                    "Type \"help\" for a list of commands.",
+                )),
+        )
+        .await
+        {
+            println!("{:?}", e);
+        }
+
+        let mut data = ctx.data.write().await;
+        data.insert::<BonkBotKey>(BonkBotValue::new());
+    }
+
+    async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {
+        let res: Result<()> = async {
+            if let Interaction::Command(command) = interaction {
+                if command.data.name == "sgr" {
+                    let args = &command.data.options;
+
+                    if args.len() < 1 {
+                        discord_commands::help(&ctx, &command).await?;
+                        return Ok(());
+                    }
+
+                    let args = args
+                        .get(0)
+                        .context("Missing option.")?
+                        .value
+                        .as_str()
+                        .context("Failed to convert option data to string.")?;
+
+                    let args = args.split(' ').collect::<Vec<&str>>();
+
+                    parse_command(&ctx, &command, &args).await?;
+                }
+            }
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = res {
+            println!("sgr slash command parse error: {e}");
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let port = dotenv::var("CHROMEDRIVER_PORT")?;
+    let token = dotenv::var("DISCORD_TOKEN")?;
 
-    let capabilities = json!({
-        "moz:firefoxOptions": {
-            "args": ["--headless", "--mute-audio", "--width=1920", "--height=1080"]
-        },
-        "goog:chromeOptions": {
-            "binary": dotenv::var("CHROME_PATH")?,
-            "args": ["--window-size=1920,1080"]
-            // "args": ["--window-size=1920,1080", "--headless", "--mute-audio"]
-        },
-    });
+    let intents = GatewayIntents::GUILD_MESSAGES
+        | GatewayIntents::DIRECT_MESSAGES
+        | GatewayIntents::MESSAGE_CONTENT;
 
-    let capabilities = match capabilities {
-        Value::Object(map) => map,
-        _ => panic!("Failed to generate capabilities value."),
-    };
+    let mut c = serenity::all::Client::builder(&token, intents)
+        .event_handler(Handler)
+        .await?;
 
-    let c = ClientBuilder::native()
-        .capabilities(capabilities.clone())
-        .connect(&format!("http://localhost:{}", port).as_str())
-        .await
-        .expect("failed to connect to WebDriver");
-
-    println!("Client loaded! Press enter to close.");
-
-    tokio::select! {
-        res = make_room(&c) => match res {
-            Err(e) => println!("{:?}", e),
-            _ => (),
-        },
-        _ = read_input() => (),
-    };
-
-    c.close().await?;
+    c.start().await?;
 
     Ok(())
 }
 
-async fn read_input() -> Result<()> {
-    let mut reader = BufReader::new(io::stdin());
-    reader.read_line(&mut String::new()).await?;
-    Ok(())
-}
+async fn parse_command(
+    ctx: &serenity::all::Context,
+    interaction: &CommandInteraction,
+    args: &Vec<&str>,
+) -> Result<()> {
+    match args.get(0) {
+        Some(subcommand) => {
+            let mut args = args.clone();
+            args.remove(0);
 
-async fn make_room(c: &Client) -> Result<()> {
-    let credentials = vec![json!({
-        "username": dotenv::var("BONK_USERNAME")?,
-        "password": dotenv::var("BONK_PASSWORD")?,
-    })];
-
-    let room_info = vec![json!({
-        "roomName": "test",
-        "roomPass": "fkdsa;lfdjskflas;jf",
-        "maxPlayers": 4,
-        "minLevel": 1,
-        "unlisted": true,
-    })];
-
-    c.goto("https://bonk.io/").await?;
-
-    let game_frame = c.find(Locator::Id("maingameframe")).await?;
-    game_frame.enter_frame().await?;
-
-    //Waiting for login window to appear.
-    loop {
-        match c
-            .find(Locator::Id("guestOrAccountContainer_accountButton"))
-            .await?
-            .click()
-            .await
-        {
-            Ok(_) => break,
-            _ => (),
+            match *subcommand {
+                "help" | "h" => discord_commands::help(ctx, interaction).await?,
+                "open" | "o" => discord_commands::open(ctx, interaction, args).await?,
+                "shutdown" | "sd" => discord_commands::shutdown(ctx, interaction).await?,
+                "ping" => discord_commands::ping(ctx, interaction, args).await?,
+                _ => {
+                    let message = CreateInteractionResponseMessage::new()
+                        .content(format!(
+                            "Unknown command \"{}\". Run \"help\" for a list of commands.",
+                            subcommand,
+                        ))
+                        .ephemeral(true);
+                    let response = CreateInteractionResponse::Message(message);
+                    interaction.create_response(&ctx.http, response).await?;
+                }
+            }
+        }
+        None => {
+            discord_commands::help(ctx, interaction).await?;
         }
     }
-    c.execute(
-        "\
-        document.getElementById('loginwindow_username').value \
-            = arguments[0].username;\
-        document.getElementById('loginwindow_password').value \
-            = arguments[0].password;\
-        ",
-        credentials,
-    )
-    .await?;
-    c.find(Locator::Id("loginwindow_submitbutton"))
-        .await?
-        .click()
-        .await?;
-
-    //Waiting for top bar to appear.
-    loop {
-        match c
-            .find(Locator::Id("pretty_top_volume"))
-            .await?
-            .click()
-            .await
-        {
-            Ok(_) => break,
-            _ => (),
-        }
-    }
-    c.find(Locator::Id("pretty_top_volume_music"))
-        .await?
-        .click()
-        .await?;
-    c.find(Locator::Id("classic_mid_customgame"))
-        .await?
-        .click()
-        .await?;
-    c.find(Locator::Id("roomlistcreatebutton"))
-        .await?
-        .click()
-        .await?;
-
-    //Waiting for "Create Game" window to appear.
-    loop {
-        match c
-            .find(Locator::Id("roomlistcreatewindowgamename"))
-            .await?
-            .click()
-            .await
-        {
-            Ok(_) => break,
-            _ => (),
-        }
-    }
-    c.execute(
-        "\
-        document.getElementById('roomlistcreatewindowgamename').value \
-            = arguments[0].roomName;\
-        document.getElementById('roomlistcreatewindowpassword').value \
-            = arguments[0].roomPass;\
-        document.getElementById('roomlistcreatewindowmaxplayers').value \
-            = arguments[0].maxPlayers;\
-        document.getElementById('roomlistcreatewindowminlevel').value \
-            = arguments[0].minLevel;\
-        if(arguments[0].unlisted){\
-            document.getElementById('roomlistcreatewindowunlistedcheckbox')\
-                .checked = true;\
-        }\
-    ",
-        room_info,
-    )
-    .await?;
-
-    c.find(Locator::Id("roomlistcreatecreatebutton"))
-        .await?
-        .click()
-        .await?;
-
-    let mut room_link;
-    loop {
-        match c
-            .find(Locator::Id("newbonklobby_linkbutton"))
-            .await?
-            .click()
-            .await
-        {
-            Err(_) => continue,
-            _ => (),
-        };
-        let status_elements = c
-            .find_all(Locator::Css(".newbonklobby_chat_status"))
-            .await?;
-        room_link = String::from("");
-        if status_elements.len() > 0 {
-            room_link = status_elements
-                .get(status_elements.len() - 1)
-                .context("Failed to parse room link.")?
-                .text()
-                .await?;
-        }
-        room_link = room_link
-            .split(' ')
-            .last()
-            .context("Failed to parse room link.")?
-            .to_string();
-        if room_link != "".to_string() {
-            break;
-        }
-    }
-    println!("Room created: {}", room_link);
-
-    //Game creation test.
-    c.find(Locator::Id("newbonklobby_modebutton"))
-        .await?
-        .click()
-        .await?;
-    loop {
-        if let Ok(_) = c
-            .find(Locator::Id("newbonklobby_mode_football"))
-            .await?
-            .click()
-            .await
-        {
-            break;
-        }
-    }
-    c.find(Locator::Id("newbonklobby_startbutton"))
-        .await?
-        .click()
-        .await?;
-    loop {
-        if c.find(Locator::Id("gamerenderer"))
-            .await?
-            .css_value("visibility")
-            .await?
-            != "hidden"
-        {
-            break;
-        }
-    }
-    let screenshot = c
-        .find(Locator::Id("gamerenderer"))
-        .await?
-        .screenshot()
-        .await?;
-    let mut file = File::create("screenshot.png")?;
-    file.write_all(&screenshot)?;
-
-    let img = image::load_from_memory_with_format(&screenshot, image::ImageFormat::Png)?;
-    let pixel = img.get_pixel(100, 100);
-    //Note: you can iterate over the pixels in an image with img.pixels().
-    println!("{} {} {}", pixel.0[0], pixel.0[1], pixel.0[2]);
-
-    sleep(Duration::from_secs(u64::MAX)).await;
 
     Ok(())
 }

@@ -9,6 +9,8 @@ pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction
             "A single slash command for all of your sgrBot needs!\n\n",
             "__Commands:__\n",
             "**help, h:** The help menu that you're currently reading.\n",
+            "**open, o:** Creates a room!\n",
+            "**shutdown, sd:** Shuts down the bot. This is the reccomended way to do it.\n",
             "**ping:** Pong!",
         ))
         .ephemeral(true);
@@ -35,6 +37,11 @@ pub async fn open(
     }
 
     //TODO make the RoomMaker actor, call it from bonk_bot.rs and call bonk_bot.rs from here.
+    // let lock = ctx.data.read().await;
+    // let channel = lock.get::<BonkBotValue>().???;
+
+    super::bonk_bot::open_room();
+
     Ok(())
 }
 

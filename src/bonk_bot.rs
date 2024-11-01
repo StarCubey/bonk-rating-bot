@@ -1,19 +1,24 @@
 mod room_maker;
 
-use tokio::sync::Mutex;
+use serenity::prelude::TypeMapKey;
 
-pub struct BonkBot {
-    clients: Mutex<Vec<fantoccini::Client>>,
+pub struct BonkBotKey;
+
+impl TypeMapKey for BonkBotKey {
+    type Value = BonkBotValue;
 }
 
-impl BonkBot {
-    pub fn new() -> BonkBot {
-        BonkBot {
-            clients: Mutex::new(Vec::new()),
-        }
-    }
+pub struct BonkBotValue {
+    client: Option<fantoccini::Client>,
+}
 
-    pub fn open_room() {
-        //TODO
+impl BonkBotValue {
+    pub fn new() -> BonkBotValue {
+        BonkBotValue { client: None }
     }
+}
+
+pub fn open_room() {
+    println!("Room opened!");
+    //TODO
 }
