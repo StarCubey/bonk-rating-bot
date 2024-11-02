@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Write;
+use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::{anyhow, Result};
@@ -8,6 +9,7 @@ use image::GenericImageView;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::time::{sleep, Instant};
 
 struct RoomMakerMessage {
     client_sender: oneshot::Sender<Result<fantoccini::Client>>,
@@ -16,15 +18,27 @@ struct RoomMakerMessage {
 //Buffer 3, blocking send
 struct RoomMaker {
     receiver: mpsc::Receiver<RoomMakerMessage>,
+    last_room_time: Option<Instant>,
 }
 
 impl RoomMaker {
     fn new(receiver: mpsc::Receiver<RoomMakerMessage>) -> RoomMaker {
-        RoomMaker { receiver }
+        RoomMaker {
+            receiver,
+            last_room_time: None,
+        }
     }
 
     async fn run(&mut self) {
+        let room_rate_limit = Duration::from_secs(10);
+
         while let Some(message) = self.receiver.recv().await {
+            if let Some(last_room_time) = self.last_room_time {
+                if let Some(wait_time) = room_rate_limit.checked_sub(last_room_time.elapsed()) {
+                    sleep(wait_time).await;
+                }
+            }
+
             let c = make_client().await;
 
             if let Ok(c) = c {
@@ -33,12 +47,14 @@ impl RoomMaker {
                 let result = match result {
                     Ok(_) => Ok(c),
                     Err(e) => {
-                        c.close();
+                        let _ = c.close();
                         Err(e)
                     }
                 };
 
-                message.client_sender.send(result);
+                let _ = message.client_sender.send(result);
+
+                self.last_room_time = Some(Instant::now());
             }
         }
     }
