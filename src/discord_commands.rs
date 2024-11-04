@@ -3,6 +3,8 @@ use serenity::all::{
     CommandInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
+use crate::bonk_bot::BonkBotKey;
+
 pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction) -> Result<()> {
     let message = CreateInteractionResponseMessage::new()
         .content(concat!(
@@ -36,11 +38,17 @@ pub async fn open(
         return Ok(());
     }
 
-    //TODO make the RoomMaker actor, call it from bonk_bot.rs and call bonk_bot.rs from here.
-    // let lock = ctx.data.read().await;
-    // let channel = lock.get::<BonkBotValue>().???;
-
-    super::bonk_bot::open_room();
+    let mut data = ctx.data.write().await;
+    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
+        match bonk_bot.open_room().await {
+            Ok(()) => {
+                println!("Room opened!");
+            }
+            Err(e) => {
+                println!("Failed to make room: {}", e.to_string());
+            }
+        }
+    }
 
     Ok(())
 }

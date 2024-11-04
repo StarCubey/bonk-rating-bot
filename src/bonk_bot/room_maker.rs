@@ -11,28 +11,28 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Instant};
 
-struct RoomMakerMessage {
-    client_sender: oneshot::Sender<Result<fantoccini::Client>>,
+pub struct RoomMakerMessage {
+    pub client_sender: oneshot::Sender<Result<fantoccini::Client>>,
 }
 
 //Buffer 3, blocking send
-struct RoomMaker {
-    receiver: mpsc::Receiver<RoomMakerMessage>,
+pub struct RoomMaker {
+    rx: mpsc::Receiver<RoomMakerMessage>,
     last_room_time: Option<Instant>,
 }
 
 impl RoomMaker {
-    fn new(receiver: mpsc::Receiver<RoomMakerMessage>) -> RoomMaker {
+    pub fn new(rx: mpsc::Receiver<RoomMakerMessage>) -> RoomMaker {
         RoomMaker {
-            receiver,
+            rx,
             last_room_time: None,
         }
     }
 
-    async fn run(&mut self) {
+    pub async fn run(&mut self) {
         let room_rate_limit = Duration::from_secs(10);
 
-        while let Some(message) = self.receiver.recv().await {
+        while let Some(message) = self.rx.recv().await {
             if let Some(last_room_time) = self.last_room_time {
                 if let Some(wait_time) = room_rate_limit.checked_sub(last_room_time.elapsed()) {
                     sleep(wait_time).await;
