@@ -11,8 +11,10 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Instant};
 
+use super::bonk_room::{BonkRoom, BonkRoomMessage};
+
 pub struct RoomMakerMessage {
-    pub client_sender: oneshot::Sender<Result<fantoccini::Client>>,
+    pub bonkroom_tx: oneshot::Sender<Result<mpsc::Sender<BonkRoomMessage>>>,
 }
 
 //Buffer 3, blocking send
@@ -44,15 +46,20 @@ impl RoomMaker {
             if let Ok(c) = c {
                 let result = make_room(&c).await;
 
-                let result = match result {
-                    Ok(_) => Ok(c),
+                match result {
+                    Ok(_) => {
+                        let (tx, rx) = mpsc::channel(10);
+                        let mut bonkroom = BonkRoom::new(rx, c);
+                        tokio::spawn(async move {
+                            bonkroom.run().await;
+                        });
+                        let _ = message.bonkroom_tx.send(Ok(tx));
+                    }
                     Err(e) => {
-                        let _ = c.close();
-                        Err(e)
+                        let _ = c.close().await;
+                        let _ = message.bonkroom_tx.send(Err(e));
                     }
                 };
-
-                let _ = message.client_sender.send(result);
 
                 self.last_room_time = Some(Instant::now());
             }

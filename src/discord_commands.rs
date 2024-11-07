@@ -58,7 +58,7 @@ pub async fn shutdown(
     interaction: &CommandInteraction,
 ) -> Result<()> {
     let message = CreateInteractionResponseMessage::new()
-        .content("Shutting down...")
+        .content("Goodbye!")
         .ephemeral(true);
     let response = CreateInteractionResponse::Message(message);
     interaction.create_response(&ctx.http, response).await?;

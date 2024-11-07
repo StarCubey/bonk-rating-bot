@@ -1,10 +1,12 @@
+mod bonk_room;
 mod room_maker;
-
-use room_maker::{RoomMaker, RoomMakerMessage};
 
 use anyhow::Result;
 use serenity::prelude::TypeMapKey;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
+
+use self::bonk_room::BonkRoomMessage;
+use self::room_maker::{RoomMaker, RoomMakerMessage};
 
 pub struct BonkBotKey;
 
@@ -13,7 +15,7 @@ impl TypeMapKey for BonkBotKey {
 }
 
 pub struct BonkBotValue {
-    client: Option<fantoccini::Client>,
+    bonk_rooms: Mutex<Vec<mpsc::Sender<BonkRoomMessage>>>,
     roommaker_tx: mpsc::Sender<RoomMakerMessage>,
 }
 
@@ -26,7 +28,7 @@ impl BonkBotValue {
         });
 
         BonkBotValue {
-            client: None,
+            bonk_rooms: Mutex::new(Vec::new()),
             roommaker_tx,
         }
     }
@@ -34,9 +36,11 @@ impl BonkBotValue {
     pub async fn open_room(&mut self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.roommaker_tx
-            .send(RoomMakerMessage { client_sender: tx })
+            .send(RoomMakerMessage { bonkroom_tx: tx })
             .await?;
-        self.client = Some(rx.await??);
+
+        let mut bonk_rooms = self.bonk_rooms.lock().await;
+        bonk_rooms.push(rx.await??);
 
         Ok(())
     }

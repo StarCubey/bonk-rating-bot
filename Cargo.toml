@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 dotenv = "0.15.0"
-fantoccini = "0.19.3"
+fantoccini = "0.21.2"
 image = "0.25.1"
 serde_json = "1.0.117"
 serenity = "0.12.2"
