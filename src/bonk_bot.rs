@@ -1,7 +1,7 @@
 mod bonk_room;
 mod room_maker;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serenity::prelude::TypeMapKey;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -41,6 +41,22 @@ impl BonkBotValue {
 
         let mut bonk_rooms = self.bonk_rooms.lock().await;
         bonk_rooms.push(rx.await??);
+
+        Ok(())
+    }
+
+    pub async fn close_all(&mut self) -> Result<()> {
+        let mut bonk_rooms = self.bonk_rooms.lock().await;
+
+        for i in (0..bonk_rooms.len()).rev() {
+            bonk_rooms
+                .get(i)
+                .context("Index out of bounds")?
+                .send(BonkRoomMessage::Close)
+                .await?;
+
+            bonk_rooms.pop();
+        }
 
         Ok(())
     }

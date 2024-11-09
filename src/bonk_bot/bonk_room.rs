@@ -7,12 +7,12 @@ pub enum BonkRoomMessage {
 
 pub struct BonkRoom {
     rx: mpsc::Receiver<BonkRoomMessage>,
-    client: fantoccini::Client,
+    _client: fantoccini::Client,
 }
 
 impl BonkRoom {
-    pub fn new(rx: mpsc::Receiver<BonkRoomMessage>, client: fantoccini::Client) -> BonkRoom {
-        BonkRoom { rx, client }
+    pub fn new(rx: mpsc::Receiver<BonkRoomMessage>, _client: fantoccini::Client) -> BonkRoom {
+        BonkRoom { rx, _client }
     }
 
     pub async fn run(&mut self) {

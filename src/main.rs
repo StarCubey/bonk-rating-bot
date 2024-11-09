@@ -112,7 +112,8 @@ async fn parse_command(
             match *subcommand {
                 "help" | "h" => discord_commands::help(ctx, interaction).await?,
                 "open" | "o" => discord_commands::open(ctx, interaction, args).await?,
-                "shutdown" | "sd" => discord_commands::shutdown(ctx, interaction).await?,
+                "shutdown" | "sd" => discord_commands::shutdown(ctx, interaction, args).await?,
+                "closeall" | "ca" => discord_commands::closeall(ctx, interaction, args).await?,
                 "ping" => discord_commands::ping(ctx, interaction, args).await?,
                 _ => {
                     let message = CreateInteractionResponseMessage::new()
