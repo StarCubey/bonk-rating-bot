@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use anyhow::{anyhow, Result};
+use fantoccini::error::CmdError;
 use fantoccini::{ClientBuilder, Locator};
 use image::GenericImageView;
 use serde_json::{json, Value};
@@ -111,21 +112,20 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
 
     c.goto("https://bonk.io/").await?;
 
-    let game_frame = c.find(Locator::Id("maingameframe")).await?;
-    game_frame.enter_frame().await?;
+    wait_for_element(&c, Locator::Id("maingameframe"))
+        .await?
+        .enter_frame()
+        .await?;
 
-    //Waiting for login window to appear.
-    loop {
-        match c
-            .find(Locator::Id("guestOrAccountContainer_accountButton"))
-            .await?
-            .click()
-            .await
-        {
-            Ok(_) => break,
-            _ => (),
-        }
-    }
+    let account_button =
+        wait_for_element(&c, Locator::Id("guestOrAccountContainer_accountButton")).await?;
+
+    retry(|| async { account_button.click().await }).await?;
+
+    let login_button = c
+        .wait()
+        .for_element(Locator::Id("loginwindow_submitbutton"))
+        .await?;
     c.execute(
         "\
         document.getElementById('loginwindow_username').value \
@@ -136,48 +136,25 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         credentials,
     )
     .await?;
-    c.find(Locator::Id("loginwindow_submitbutton"))
-        .await?
-        .click()
-        .await?;
+    retry(|| async { login_button.click().await }).await?;
 
     //Waiting for top bar to appear.
-    loop {
-        match c
-            .find(Locator::Id("pretty_top_volume"))
-            .await?
-            .click()
-            .await
-        {
-            Ok(_) => break,
-            _ => (),
-        }
-    }
-    c.find(Locator::Id("pretty_top_volume_music"))
-        .await?
-        .click()
-        .await?;
-    c.find(Locator::Id("classic_mid_customgame"))
-        .await?
-        .click()
-        .await?;
-    c.find(Locator::Id("roomlistcreatebutton"))
-        .await?
-        .click()
-        .await?;
+    let top_bar = wait_for_element(&c, Locator::Id("pretty_top_volume")).await?;
+    retry(|| async { top_bar.click().await }).await?;
+
+    let music_button = wait_for_element(&c, Locator::Id("pretty_top_volume_music")).await?;
+    retry(|| async { music_button.click().await }).await?;
+
+    let custom_game_button = wait_for_element(&c, Locator::Id("classic_mid_customgame")).await?;
+    retry(|| async { custom_game_button.click().await }).await?;
+
+    let create_button = wait_for_element(&c, Locator::Id("roomlistcreatebutton")).await?;
+    retry(|| async { create_button.click().await }).await?;
 
     //Waiting for "Create Game" window to appear.
-    loop {
-        match c
-            .find(Locator::Id("roomlistcreatewindowgamename"))
-            .await?
-            .click()
-            .await
-        {
-            Ok(_) => break,
-            _ => (),
-        }
-    }
+    let room_name_input = wait_for_element(&c, Locator::Id("roomlistcreatewindowgamename")).await?;
+    retry(|| async { room_name_input.click().await }).await?;
+
     c.execute(
         "\
         document.getElementById('roomlistcreatewindowgamename').value \
@@ -197,12 +174,11 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
     )
     .await?;
 
-    c.find(Locator::Id("roomlistcreatecreatebutton"))
-        .await?
-        .click()
-        .await?;
+    let create_button = wait_for_element(&c, Locator::Id("roomlistcreatecreatebutton")).await?;
+    retry(|| async { create_button.click().await }).await?;
 
     let mut room_link;
+
     loop {
         match c
             .find(Locator::Id("newbonklobby_linkbutton"))
@@ -278,4 +254,38 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
     println!("{} {} {}", pixel.0[0], pixel.0[1], pixel.0[2]);
 
     Ok(())
+}
+
+async fn wait_for_element(
+    client: &fantoccini::Client,
+    locator: Locator<'_>,
+) -> Result<fantoccini::elements::Element, CmdError> {
+    client
+        .wait()
+        .at_most(Duration::from_secs(10))
+        .every(Duration::from_millis(250))
+        .for_element(locator)
+        .await
+}
+
+async fn retry<F, Fut, T, E>(mut operation: F) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+{
+    let start = Instant::now();
+    let max_duration = Duration::from_secs(10);
+    let interval = Duration::from_millis(250);
+
+    loop {
+        match operation().await {
+            Ok(res) => return Ok(res),
+            Err(e) => {
+                if start.elapsed() >= max_duration {
+                    return Err(e);
+                }
+                sleep(interval).await;
+            }
+        }
+    }
 }
