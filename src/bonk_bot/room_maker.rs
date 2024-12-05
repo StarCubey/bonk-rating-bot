@@ -33,7 +33,7 @@ impl RoomMaker {
     }
 
     pub async fn run(&mut self) {
-        let room_rate_limit = Duration::from_secs(10);
+        let room_rate_limit = Duration::from_secs(5);
 
         while let Some(message) = self.rx.recv().await {
             if let Some(last_room_time) = self.last_room_time {
@@ -42,28 +42,40 @@ impl RoomMaker {
                 }
             }
 
-            let c = make_client().await;
+            let mut i = 0;
+            loop {
+                let err;
+                match make_client().await {
+                    Ok(c) => {
+                        match make_room(&c).await {
+                            Ok(_) => {
+                                let (tx, rx) = mpsc::channel(10);
+                                let mut bonkroom = BonkRoom::new(rx, c);
+                                tokio::spawn(async move {
+                                    bonkroom.run().await;
+                                });
+                                let _ = message.bonkroom_tx.send(Ok(tx));
 
-            if let Ok(c) = c {
-                let result = make_room(&c).await;
-
-                match result {
-                    Ok(_) => {
-                        let (tx, rx) = mpsc::channel(10);
-                        let mut bonkroom = BonkRoom::new(rx, c);
-                        tokio::spawn(async move {
-                            bonkroom.run().await;
-                        });
-                        let _ = message.bonkroom_tx.send(Ok(tx));
+                                break;
+                            }
+                            Err(e) => {
+                                let _ = c.close().await;
+                                err = e;
+                            }
+                        };
                     }
                     Err(e) => {
-                        let _ = c.close().await;
-                        let _ = message.bonkroom_tx.send(Err(e));
+                        err = e;
                     }
                 };
+                if i >= 4 {
+                    let _ = message.bonkroom_tx.send(Err(err));
+                    break;
+                }
 
-                self.last_room_time = Some(Instant::now());
+                i += 1;
             }
+            self.last_room_time = Some(Instant::now());
         }
     }
 }
@@ -148,67 +160,104 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
     let custom_game_button = wait_for_element(&c, Locator::Id("classic_mid_customgame")).await?;
     retry(|| async { custom_game_button.click().await }).await?;
 
-    let create_button = wait_for_element(&c, Locator::Id("roomlistcreatebutton")).await?;
-    retry(|| async { create_button.click().await }).await?;
-
-    //Waiting for "Create Game" window to appear.
-    let room_name_input = wait_for_element(&c, Locator::Id("roomlistcreatewindowgamename")).await?;
-    retry(|| async { room_name_input.click().await }).await?;
-
-    c.execute(
-        "\
-        document.getElementById('roomlistcreatewindowgamename').value \
-            = arguments[0].roomName;\
-        document.getElementById('roomlistcreatewindowpassword').value \
-            = arguments[0].roomPass;\
-        document.getElementById('roomlistcreatewindowmaxplayers').value \
-            = arguments[0].maxPlayers;\
-        document.getElementById('roomlistcreatewindowminlevel').value \
-            = arguments[0].minLevel;\
-        if(arguments[0].unlisted){\
-            document.getElementById('roomlistcreatewindowunlistedcheckbox')\
-                .checked = true;\
-        }\
-    ",
-        room_info,
-    )
-    .await?;
-
-    let create_button = wait_for_element(&c, Locator::Id("roomlistcreatecreatebutton")).await?;
-    retry(|| async { create_button.click().await }).await?;
-
-    let mut room_link;
-
+    let mut i = 0;
     loop {
-        match c
-            .find(Locator::Id("newbonklobby_linkbutton"))
-            .await?
-            .click()
-            .await
-        {
-            Err(_) => continue,
-            _ => (),
-        };
-        let status_elements = c
-            .find_all(Locator::Css(".newbonklobby_chat_status"))
-            .await?;
-        room_link = String::from("");
-        if status_elements.len() > 0 {
-            room_link = status_elements
-                .get(status_elements.len() - 1)
-                .context("Failed to parse room link.")?
-                .text()
-                .await?;
-        }
-        room_link = room_link
-            .split(' ')
-            .last()
-            .context("Failed to parse room link.")?
-            .to_string();
-        if room_link != "".to_string() {
+        let create_button = wait_for_element(&c, Locator::Id("roomlistcreatebutton")).await?;
+        retry(|| async { create_button.click().await }).await?;
+
+        //Waiting for "Create Game" window to appear.
+        let room_name_input =
+            wait_for_element(&c, Locator::Id("roomlistcreatewindowgamename")).await?;
+        retry(|| async { room_name_input.click().await }).await?;
+
+        c.execute(
+            "\
+            document.getElementById('roomlistcreatewindowgamename').value \
+                = arguments[0].roomName;\
+            document.getElementById('roomlistcreatewindowpassword').value \
+                = arguments[0].roomPass;\
+            document.getElementById('roomlistcreatewindowmaxplayers').value \
+                = arguments[0].maxPlayers;\
+            document.getElementById('roomlistcreatewindowminlevel').value \
+                = arguments[0].minLevel;\
+            if(arguments[0].unlisted){\
+                document.getElementById('roomlistcreatewindowunlistedcheckbox')\
+                    .checked = true;\
+            }\
+        ",
+            room_info.clone(),
+        )
+        .await?;
+
+        let create_button = wait_for_element(&c, Locator::Id("roomlistcreatecreatebutton")).await?;
+        retry(|| async { create_button.click().await }).await?;
+
+        //Checking for successful room creation.
+        let chat = wait_for_element(&c, Locator::Id("newbonklobby_chatbox")).await?;
+        if let Ok(_) = retry(|| async { chat.click().await }).await {
             break;
+        } else if i >= 4 {
+            return Err(anyhow!("Room creation timeout."));
         }
+
+        let cancel_button =
+            wait_for_element(&c, Locator::Id("sm_connectingWindowCancelButton")).await?;
+        retry(|| async { cancel_button.click().await }).await?;
+
+        i += 1;
     }
+
+    let link_button = wait_for_element(&c, Locator::Id("newbonklobby_linkbutton")).await?;
+    retry(|| async { link_button.click().await }).await?;
+
+    let status_elements = c
+        .find_all(Locator::Css(".newbonklobby_chat_status"))
+        .await?;
+    let mut room_link = String::from("");
+    if status_elements.len() > 0 {
+        room_link = status_elements
+            .get(status_elements.len() - 1)
+            .context("Failed to parse room link.")?
+            .text()
+            .await?;
+    }
+    room_link = room_link
+        .split(' ')
+        .last()
+        .context("Failed to parse room link.")?
+        .to_string();
+
+    // let mut room_link;
+    // loop {
+    //     match c
+    //         .find(Locator::Id("newbonklobby_linkbutton"))
+    //         .await?
+    //         .click()
+    //         .await
+    //     {
+    //         Err(_) => continue,
+    //         _ => (),
+    //     };
+    //     let status_elements = c
+    //         .find_all(Locator::Css(".newbonklobby_chat_status"))
+    //         .await?;
+    //     room_link = String::from("");
+    //     if status_elements.len() > 0 {
+    //         room_link = status_elements
+    //             .get(status_elements.len() - 1)
+    //             .context("Failed to parse room link.")?
+    //             .text()
+    //             .await?;
+    //     }
+    //     room_link = room_link
+    //         .split(' ')
+    //         .last()
+    //         .context("Failed to parse room link.")?
+    //         .to_string();
+    //     if room_link != "".to_string() {
+    //         break;
+    //     }
+    // }
     println!("Room created: {}", room_link);
 
     //Game creation test.
@@ -262,7 +311,7 @@ async fn wait_for_element(
 ) -> Result<fantoccini::elements::Element, CmdError> {
     client
         .wait()
-        .at_most(Duration::from_secs(10))
+        .at_most(Duration::from_secs(5))
         .every(Duration::from_millis(250))
         .for_element(locator)
         .await
@@ -274,7 +323,7 @@ where
     Fut: std::future::Future<Output = Result<T, E>>,
 {
     let start = Instant::now();
-    let max_duration = Duration::from_secs(10);
+    let max_duration = Duration::from_secs(5);
     let interval = Duration::from_millis(250);
 
     loop {
