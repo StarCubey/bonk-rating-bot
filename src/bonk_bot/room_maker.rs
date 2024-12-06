@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::Write;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -8,6 +6,8 @@ use fantoccini::error::CmdError;
 use fantoccini::{ClientBuilder, Locator};
 use image::GenericImageView;
 use serde_json::{json, Value};
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Instant};
@@ -89,9 +89,10 @@ async fn make_client() -> Result<fantoccini::Client> {
         },
         "goog:chromeOptions": {
             "binary": dotenv::var("CHROME_PATH")?,
-            "args": ["--window-size=1920,1080"]
-            // "args": ["--window-size=1920,1080", "--headless", "--mute-audio"]
+            "args": ["--window-size=1920,1080"],
+            // "args": ["--window-size=1920,1080", "--headless", "--mute-audio"],
         },
+        "pageLoadStrategy": "none",
     });
 
     let capabilities = match capabilities {
@@ -122,12 +123,36 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         "unlisted": true,
     })];
 
+    let mut code_injector_file = File::open("assets/Code Injector - Bonkio.user.js").await?;
+    let mut code_injector = String::new();
+    code_injector_file
+        .read_to_string(&mut code_injector)
+        .await?;
+
+    let mut bonk_host_file = File::open("assets/Bonk Host.user.js").await?;
+    let mut bonk_host = String::new();
+    bonk_host_file.read_to_string(&mut bonk_host).await?;
+
+    let mut bonk_playlists_file = File::open("assets/Bonk Playlists.user.js").await?;
+    let mut bonk_playlists = String::new();
+    bonk_playlists_file
+        .read_to_string(&mut bonk_playlists)
+        .await?;
+
     c.goto("https://bonk.io/").await?;
 
-    wait_for_element(&c, Locator::Id("maingameframe"))
+    //I tried decreasing the retry time, but it broke, so I'm just not going to question it.
+    c.wait()
+        .at_most(Duration::from_secs(5))
+        .every(Duration::from_millis(250))
+        .for_element(Locator::Id("maingameframe"))
         .await?
         .enter_frame()
         .await?;
+
+    c.execute(&code_injector, Vec::new()).await?;
+    c.execute(&bonk_host, Vec::new()).await?;
+    c.execute(&bonk_playlists, Vec::new()).await?;
 
     let account_button =
         wait_for_element(&c, Locator::Id("guestOrAccountContainer_accountButton")).await?;
@@ -148,11 +173,25 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         credentials,
     )
     .await?;
-    retry(|| async { login_button.click().await }).await?;
 
-    //Waiting for top bar to appear.
-    let top_bar = wait_for_element(&c, Locator::Id("pretty_top_volume")).await?;
-    retry(|| async { top_bar.click().await }).await?;
+    //Retry in case script hasn't loaded yet
+    let mut i = 0;
+    loop {
+        retry(|| async { login_button.click().await }).await?;
+
+        //Waiting for top bar to appear.
+        if let Ok(top_bar) = wait_for_element(&c, Locator::Id("pretty_top_volume")).await {
+            if let Ok(_) = retry(|| async { top_bar.click().await }).await {
+                break;
+            }
+        }
+
+        if i >= 4 {
+            return Err(anyhow!("Failed to log in."));
+        }
+
+        i += 1;
+    }
 
     let music_button = wait_for_element(&c, Locator::Id("pretty_top_volume_music")).await?;
     retry(|| async { music_button.click().await }).await?;
@@ -227,54 +266,12 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         .context("Failed to parse room link.")?
         .to_string();
 
-    // let mut room_link;
-    // loop {
-    //     match c
-    //         .find(Locator::Id("newbonklobby_linkbutton"))
-    //         .await?
-    //         .click()
-    //         .await
-    //     {
-    //         Err(_) => continue,
-    //         _ => (),
-    //     };
-    //     let status_elements = c
-    //         .find_all(Locator::Css(".newbonklobby_chat_status"))
-    //         .await?;
-    //     room_link = String::from("");
-    //     if status_elements.len() > 0 {
-    //         room_link = status_elements
-    //             .get(status_elements.len() - 1)
-    //             .context("Failed to parse room link.")?
-    //             .text()
-    //             .await?;
-    //     }
-    //     room_link = room_link
-    //         .split(' ')
-    //         .last()
-    //         .context("Failed to parse room link.")?
-    //         .to_string();
-    //     if room_link != "".to_string() {
-    //         break;
-    //     }
-    // }
     println!("Room created: {}", room_link);
 
     //Game creation test.
-    c.find(Locator::Id("newbonklobby_modebutton"))
-        .await?
-        .click()
+    c.execute("window.bonkHost.bonkSetMode('f');", Vec::new())
         .await?;
-    loop {
-        if let Ok(_) = c
-            .find(Locator::Id("newbonklobby_mode_football"))
-            .await?
-            .click()
-            .await
-        {
-            break;
-        }
-    }
+
     c.find(Locator::Id("newbonklobby_startbutton"))
         .await?
         .click()
@@ -289,18 +286,6 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
             break;
         }
     }
-    let screenshot = c
-        .find(Locator::Id("gamerenderer"))
-        .await?
-        .screenshot()
-        .await?;
-    let mut file = File::create("screenshot.png")?;
-    file.write_all(&screenshot)?;
-
-    let img = image::load_from_memory_with_format(&screenshot, image::ImageFormat::Png)?;
-    let pixel = img.get_pixel(100, 100);
-    //Note: you can iterate over the pixels in an image with img.pixels().
-    println!("{} {} {}", pixel.0[0], pixel.0[1], pixel.0[2]);
 
     Ok(())
 }
@@ -311,7 +296,7 @@ async fn wait_for_element(
 ) -> Result<fantoccini::elements::Element, CmdError> {
     client
         .wait()
-        .at_most(Duration::from_secs(5))
+        .at_most(Duration::from_secs(10))
         .every(Duration::from_millis(250))
         .for_element(locator)
         .await
@@ -323,7 +308,7 @@ where
     Fut: std::future::Future<Output = Result<T, E>>,
 {
     let start = Instant::now();
-    let max_duration = Duration::from_secs(5);
+    let max_duration = Duration::from_secs(10);
     let interval = Duration::from_millis(250);
 
     loop {

@@ -2,6 +2,8 @@
 name = "bonkmmr"
 version = "0.1.0"
 edition = "2021"
+author = "StarCubey"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow = "1.0.86"
