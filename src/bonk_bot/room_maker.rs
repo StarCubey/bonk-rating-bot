@@ -4,10 +4,9 @@ use anyhow::Context;
 use anyhow::{anyhow, Result};
 use fantoccini::error::CmdError;
 use fantoccini::{ClientBuilder, Locator};
-use image::GenericImageView;
 use serde_json::{json, Value};
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Instant};
@@ -123,17 +122,15 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         "unlisted": true,
     })];
 
-    let mut code_injector_file = File::open("assets/Code Injector - Bonkio.user.js").await?;
-    let mut code_injector = String::new();
-    code_injector_file
-        .read_to_string(&mut code_injector)
-        .await?;
+    let mut injector_file = File::open("dependencies/Injector.js").await?;
+    let mut injector = String::new();
+    injector_file.read_to_string(&mut injector).await?;
 
-    let mut bonk_host_file = File::open("assets/Bonk Host.user.js").await?;
+    let mut bonk_host_file = File::open("dependencies/Bonk Host.user.js").await?;
     let mut bonk_host = String::new();
     bonk_host_file.read_to_string(&mut bonk_host).await?;
 
-    let mut bonk_playlists_file = File::open("assets/Bonk Playlists.user.js").await?;
+    let mut bonk_playlists_file = File::open("dependencies/Bonk Playlists.user.js").await?;
     let mut bonk_playlists = String::new();
     bonk_playlists_file
         .read_to_string(&mut bonk_playlists)
@@ -150,7 +147,7 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         .enter_frame()
         .await?;
 
-    c.execute(&code_injector, Vec::new()).await?;
+    c.execute(&injector, Vec::new()).await?;
     c.execute(&bonk_host, Vec::new()).await?;
     c.execute(&bonk_playlists, Vec::new()).await?;
 
