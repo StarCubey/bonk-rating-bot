@@ -4,6 +4,7 @@ use anyhow::Context;
 use anyhow::{anyhow, Result};
 use fantoccini::error::CmdError;
 use fantoccini::{ClientBuilder, Locator};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
@@ -14,10 +15,39 @@ use tokio::time::{sleep, Instant};
 use super::bonk_room::{BonkRoom, BonkRoomMessage};
 
 pub struct RoomMakerMessage {
-    pub bonkroom_tx: oneshot::Sender<Result<mpsc::Sender<BonkRoomMessage>>>,
+    pub bonkroom_tx: oneshot::Sender<Result<CreationReply>>,
+    pub room_parameters: RoomParameters,
 }
 
-//Buffer 3, blocking send
+pub struct CreationReply {
+    pub bonkroom_tx: mpsc::Sender<BonkRoomMessage>,
+    pub room_link: String,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct RoomParameters {
+    pub headless: Option<bool>,
+    pub name: String,
+    pub password: Option<String>,
+    pub max_players: i32,
+    pub min_level: i32,
+    pub unlisted: Option<bool>,
+    pub mode: Mode,
+    pub rounds: i32,
+}
+
+#[derive(Deserialize, Serialize)]
+pub enum Mode {
+    Football,
+    Simple,
+    DeathArrows,
+    Arrows,
+    Grapple,
+    VTOL,
+    Classic,
+}
+
+///Buffer 3, blocking send
 pub struct RoomMaker {
     rx: mpsc::Receiver<RoomMakerMessage>,
     last_room_time: Option<Instant>,
@@ -44,16 +74,19 @@ impl RoomMaker {
             let mut i = 0;
             loop {
                 let err;
-                match make_client().await {
+                match make_client(message.room_parameters.headless.unwrap_or(true)).await {
                     Ok(c) => {
-                        match make_room(&c).await {
-                            Ok(_) => {
+                        match make_room(&c, &message.room_parameters).await {
+                            Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
                                 let mut bonkroom = BonkRoom::new(rx, c);
                                 tokio::spawn(async move {
                                     bonkroom.run().await;
                                 });
-                                let _ = message.bonkroom_tx.send(Ok(tx));
+                                let _ = message.bonkroom_tx.send(Ok(CreationReply {
+                                    bonkroom_tx: tx,
+                                    room_link,
+                                }));
 
                                 break;
                             }
@@ -79,20 +112,35 @@ impl RoomMaker {
     }
 }
 
-async fn make_client() -> Result<fantoccini::Client> {
+async fn make_client(headless: bool) -> Result<fantoccini::Client> {
     let port = dotenv::var("CHROMEDRIVER_PORT")?;
 
-    let capabilities = json!({
+    let capabilities_headless = json!({
         "moz:firefoxOptions": {
             "args": ["--headless", "--mute-audio", "--width=1920", "--height=1080"]
         },
         "goog:chromeOptions": {
             "binary": dotenv::var("CHROME_PATH")?,
-            "args": ["--window-size=1920,1080"],
-            // "args": ["--window-size=1920,1080", "--headless", "--mute-audio"],
+            "args": ["--window-size=1920,1080", "--headless", "--mute-audio"],
         },
         "pageLoadStrategy": "none",
     });
+
+    let capabilities_headful = json!({
+        "moz:firefoxOptions": {
+            "args": ["--mute-audio", "--width=1920", "--height=1080"]
+        },
+        "goog:chromeOptions": {
+            "binary": dotenv::var("CHROME_PATH")?,
+            "args": ["--window-size=1920,1080"],
+        },
+        "pageLoadStrategy": "none",
+    });
+
+    let capabilities = match headless {
+        true => capabilities_headless,
+        false => capabilities_headful,
+    };
 
     let capabilities = match capabilities {
         Value::Object(map) => map,
@@ -108,19 +156,30 @@ async fn make_client() -> Result<fantoccini::Client> {
     Ok(c)
 }
 
-async fn make_room(c: &fantoccini::Client) -> Result<()> {
+///Returns room link.
+async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> Result<String> {
     let credentials = vec![json!({
         "username": dotenv::var("BONK_USERNAME")?,
         "password": dotenv::var("BONK_PASSWORD")?,
     })];
 
     let room_info = vec![json!({
-        "roomName": "test",
-        "roomPass": "fkdsa;lfdjskflas;jf",
-        "maxPlayers": 4,
-        "minLevel": 1,
-        "unlisted": true,
+        "roomName": room_parameters.name,
+        "roomPass": room_parameters.password.clone().unwrap_or(String::from("")),
+        "maxPlayers": room_parameters.max_players,
+        "minLevel": room_parameters.min_level,
+        "unlisted": room_parameters.unlisted.unwrap_or(false),
     })];
+
+    let mode = match &room_parameters.mode {
+        Mode::Football => "f",
+        Mode::Simple => "bs",
+        Mode::DeathArrows => "ard",
+        Mode::Arrows => "ar",
+        Mode::Grapple => "sp",
+        Mode::VTOL => "v",
+        Mode::Classic => "b",
+    };
 
     let mut injector_file = File::open("dependencies/Injector.js").await?;
     let mut injector = String::new();
@@ -263,28 +322,29 @@ async fn make_room(c: &fantoccini::Client) -> Result<()> {
         .context("Failed to parse room link.")?
         .to_string();
 
-    println!("Room created: {}", room_link);
+    let rounds_input = wait_for_element(&c, Locator::Id("newbonklobby_roundsinput")).await?;
+    retry(|| async {
+        rounds_input
+            .send_keys(&room_parameters.rounds.to_string())
+            .await
+    })
+    .await?;
+
+    c.execute(
+        "window.bonkHost.bonkSetMode(arguments[0].mode);",
+        vec![json!({"mode": mode})],
+    )
+    .await?;
+
+    println!("Room created!");
 
     //Game creation test.
-    c.execute("window.bonkHost.bonkSetMode('f');", Vec::new())
-        .await?;
-
     c.find(Locator::Id("newbonklobby_startbutton"))
         .await?
         .click()
         .await?;
-    loop {
-        if c.find(Locator::Id("gamerenderer"))
-            .await?
-            .css_value("visibility")
-            .await?
-            != "hidden"
-        {
-            break;
-        }
-    }
 
-    Ok(())
+    Ok(room_link)
 }
 
 async fn wait_for_element(
