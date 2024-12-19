@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serenity::all::{
     CommandInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
     EditInteractionResponse,
 };
 
-use crate::bonk_bot::BonkBotKey;
+use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 
 pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction) -> Result<()> {
     interaction
@@ -34,7 +34,7 @@ pub async fn open(
         ctx,
         interaction,
         args,
-        "This command opens a bonk.io room. Use \"close\" to close all rooms.",
+        "This command opens a bonk.io room from room parameters specified in a json file attachment. Use \"closeall\" to close all rooms.",
     )
     .await?
     {
@@ -45,12 +45,27 @@ pub async fn open(
         .create_response(&ctx.http, loading_message())
         .await?;
 
+    let attachment = interaction
+        .data
+        .resolved
+        .attachments
+        .values()
+        .next()
+        .context("Attachment not found.")?;
+
+    let response = reqwest::get(&attachment.url).await?;
+    let file = response.text().await?;
+    let room_parameters: RoomParameters = serde_json::from_str(&file)?;
+
     let mut data = ctx.data.write().await;
     if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.open_room().await {
-            Ok(()) => {
+        match bonk_bot.open_room(room_parameters).await {
+            Ok(room_link) => {
                 interaction
-                    .edit_response(&ctx.http, edit_message("Room opened!"))
+                    .edit_response(
+                        &ctx.http,
+                        edit_message(format!("Room opened: {}", room_link)),
+                    )
                     .await?;
             }
             Err(e) => {

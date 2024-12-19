@@ -7,8 +7,8 @@ use dotenv;
 use serenity::{
     all::{
         ActivityData, Command, CommandInteraction, CreateCommand, CreateCommandOption,
-        CreateInteractionResponse, CreateInteractionResponseMessage, EventHandler, GatewayIntents,
-        Interaction, Ready,
+        CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
+        EventHandler, GatewayIntents, Interaction, Ready,
     },
     async_trait,
 };
@@ -38,6 +38,11 @@ impl EventHandler for Handler {
                     serenity::all::CommandOptionType::String,
                     "command",
                     "Type \"help\" for a list of commands.",
+                ))
+                .add_option(CreateCommandOption::new(
+                    serenity::all::CommandOptionType::Attachment,
+                    "attachment",
+                    "Add an attachment here if applicable.",
                 )),
         )
         .await
@@ -50,8 +55,8 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {
-        let res: Result<()> = async {
-            if let Interaction::Command(command) = interaction {
+        if let Interaction::Command(command) = interaction {
+            let res: Result<()> = async {
                 if command.data.name == "sgr" {
                     let args = &command.data.options;
 
@@ -71,13 +76,33 @@ impl EventHandler for Handler {
 
                     parse_command(&ctx, &command, &args).await?;
                 }
+                Ok(())
             }
-            Ok(())
-        }
-        .await;
+            .await;
 
-        if let Err(e) = res {
-            println!("sgr slash command parse error: {e}");
+            if let Err(e) = res {
+                //uncomment if you want command error messages to print to console.
+                //println!("sgr slash command parse error: {e}");
+
+                let message = CreateInteractionResponseMessage::new()
+                    .content(format!("Command failed: {e}"))
+                    .ephemeral(true);
+                match command
+                    .create_response(&ctx.http, CreateInteractionResponse::Message(message))
+                    .await
+                {
+                    Err(_) => {
+                        let _ = command
+                            .edit_response(
+                                &ctx.http,
+                                EditInteractionResponse::new()
+                                    .content(format!("Command failed: {e}")),
+                            )
+                            .await;
+                    }
+                    _ => (),
+                }
+            }
         }
     }
 }

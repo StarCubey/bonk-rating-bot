@@ -1,5 +1,5 @@
-mod bonk_room;
-mod room_maker;
+pub mod bonk_room;
+pub mod room_maker;
 
 use anyhow::{Context, Result};
 use serenity::prelude::TypeMapKey;
@@ -33,16 +33,24 @@ impl BonkBotValue {
         }
     }
 
-    pub async fn open_room(&mut self) -> Result<()> {
+    pub async fn open_room(
+        &mut self,
+        room_parameters: room_maker::RoomParameters,
+    ) -> Result<String> {
         let (tx, rx) = oneshot::channel();
         self.roommaker_tx
-            .send(RoomMakerMessage { bonkroom_tx: tx })
+            .send(RoomMakerMessage {
+                bonkroom_tx: tx,
+                room_parameters,
+            })
             .await?;
 
-        let mut bonk_rooms = self.bonk_rooms.lock().await;
-        bonk_rooms.push(rx.await??);
+        let output = rx.await??;
 
-        Ok(())
+        let mut bonk_rooms = self.bonk_rooms.lock().await;
+        bonk_rooms.push(output.bonkroom_tx);
+
+        Ok(output.room_link)
     }
 
     pub async fn close_all(&mut self) -> Result<()> {
