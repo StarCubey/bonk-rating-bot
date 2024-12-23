@@ -4,6 +4,7 @@ mod discord_commands;
 use anyhow::{Context, Result};
 use bonk_bot::{BonkBotKey, BonkBotValue};
 use dotenv;
+use serde::Deserialize;
 use serenity::{
     all::{
         ActivityData, Command, CommandInteraction, CreateCommand, CreateCommandOption,
@@ -11,9 +12,21 @@ use serenity::{
         EventHandler, GatewayIntents, Interaction, Ready,
     },
     async_trait,
+    prelude::TypeMapKey,
 };
 
 struct Handler;
+
+pub struct ConfigKey;
+
+impl TypeMapKey for ConfigKey {
+    type Value = Config;
+}
+
+#[derive(Deserialize, Clone)]
+pub struct Config {
+    bot_admin: Vec<u64>,
+}
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -34,11 +47,14 @@ impl EventHandler for Handler {
             &ctx.http,
             CreateCommand::new("sgr")
                 .description("A command prefix")
-                .add_option(CreateCommandOption::new(
-                    serenity::all::CommandOptionType::String,
-                    "command",
-                    "Type \"help\" for a list of commands.",
-                ))
+                .add_option(
+                    CreateCommandOption::new(
+                        serenity::all::CommandOptionType::String,
+                        "command",
+                        "Type \"help\" for a list of commands.",
+                    )
+                    .required(true),
+                )
                 .add_option(CreateCommandOption::new(
                     serenity::all::CommandOptionType::Attachment,
                     "attachment",
@@ -51,7 +67,14 @@ impl EventHandler for Handler {
         }
 
         let mut data = ctx.data.write().await;
+
         data.insert::<BonkBotKey>(BonkBotValue::new());
+
+        if let Ok(config) = tokio::fs::read_to_string("config.toml").await {
+            if let Ok(config) = toml::de::from_str(config.as_str()) {
+                data.insert::<ConfigKey>(config);
+            }
+        }
     }
 
     async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {
@@ -135,11 +158,9 @@ async fn parse_command(
             args.remove(0);
 
             match *subcommand {
-                "help" | "h" => discord_commands::help(ctx, interaction).await?,
-                "open" | "o" => discord_commands::open(ctx, interaction, args).await?,
-                "shutdown" | "sd" => discord_commands::shutdown(ctx, interaction, args).await?,
-                "closeall" | "ca" => discord_commands::closeall(ctx, interaction, args).await?,
+                "help" | "h" | "?" => discord_commands::help(ctx, interaction).await?,
                 "ping" => discord_commands::ping(ctx, interaction, args).await?,
+                "a" => discord_commands::a(ctx, interaction, args).await?,
                 _ => {
                     let message = CreateInteractionResponseMessage::new()
                         .content(format!(

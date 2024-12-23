@@ -12,5 +12,6 @@ fantoccini = "0.21.2"
 reqwest = "0.12.9"
 serde = "1.0.216"
 serde_json = "1.0.117"
-serenity = "0.12.2"
+serenity = { version = "0.12.2", features = ["model"] }
 tokio = {version = "1.38.0", features = ["full"]}
+toml = "0.8.19"

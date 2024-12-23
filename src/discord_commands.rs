@@ -1,154 +1,43 @@
-use anyhow::{Context, Result};
+mod admin_commands;
+
+use anyhow::Result;
 use serenity::all::{
     CommandInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
     EditInteractionResponse,
 };
 
-use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
-
 pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction) -> Result<()> {
+    let config = {
+        let data = ctx.data.read().await;
+        data.get::<super::ConfigKey>().cloned()
+    };
+
+    let mut admin = false;
+    if let Some(config) = config {
+        admin = config.bot_admin.contains(&interaction.user.id.get());
+    }
+
     interaction
         .create_response(
             &ctx.http,
-            response_message(concat!(
-                "A single slash command for all of your sgrBot needs!\n\n",
-                "__Commands:__\n",
-                "**help, h:** The help menu that you're currently reading.\n",
-                "**open, o:** Creates a room!\n",
-                "**closeall, ca:** Closes all rooms.\n",
-                "**shutdown, sd:** Shuts down the bot. This is the reccomended way to do it.\n",
-                "**ping:** Pong!",
-            )),
+            response_message(
+                concat!(
+                    "A single slash command for all of your sgrBot needs!\n\n",
+                    "__Commands:__\n",
+                    "**help, h:** The help menu that you're currently reading.\n",
+                    "**ping:** Pong!",
+                )
+                .to_string()
+                    + if admin {
+                        "\n**a**: Runs an admin command."
+                    } else {
+                        ""
+                    },
+            ),
         )
         .await?;
 
     Ok(())
-}
-
-pub async fn open(
-    ctx: &serenity::all::Context,
-    interaction: &CommandInteraction,
-    args: Vec<&str>,
-) -> Result<()> {
-    if help_check(
-        ctx,
-        interaction,
-        args,
-        "This command opens a bonk.io room from room parameters specified in a json file attachment. Use \"closeall\" to close all rooms.",
-    )
-    .await?
-    {
-        return Ok(());
-    }
-
-    interaction
-        .create_response(&ctx.http, loading_message())
-        .await?;
-
-    let attachment = interaction
-        .data
-        .resolved
-        .attachments
-        .values()
-        .next()
-        .context("Attachment not found.")?;
-
-    let response = reqwest::get(&attachment.url).await?;
-    let file = response.text().await?;
-    let room_parameters: RoomParameters = serde_json::from_str(&file)?;
-
-    let mut data = ctx.data.write().await;
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.open_room(room_parameters).await {
-            Ok(room_link) => {
-                interaction
-                    .edit_response(
-                        &ctx.http,
-                        edit_message(format!("Room opened: {}", room_link)),
-                    )
-                    .await?;
-            }
-            Err(e) => {
-                interaction
-                    .edit_response(
-                        &ctx.http,
-                        edit_message(format!("Failed to make room: {}", e)),
-                    )
-                    .await?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn closeall(
-    ctx: &serenity::all::Context,
-    interaction: &CommandInteraction,
-    args: Vec<&str>,
-) -> Result<()> {
-    if help_check(
-        ctx,
-        interaction,
-        args,
-        "Shuts down the bot. This is the reccomended way to do it.",
-    )
-    .await?
-    {
-        return Ok(());
-    }
-
-    let mut data = ctx.data.write().await;
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.close_all().await {
-            Ok(()) => {
-                interaction
-                    .create_response(&ctx.http, response_message("Rooms closed!"))
-                    .await?;
-            }
-            Err(e) => {
-                interaction
-                    .create_response(
-                        &ctx.http,
-                        response_message(format!("Error while closing rooms: {}", e)),
-                    )
-                    .await?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn shutdown(
-    ctx: &serenity::all::Context,
-    interaction: &CommandInteraction,
-    args: Vec<&str>,
-) -> Result<()> {
-    if help_check(
-        ctx,
-        interaction,
-        args,
-        concat!(
-            "Shuts down the bot. This is the reccomended way to do it. ",
-            "This command does some cleanup. Hopefully, no clients will be leaked."
-        ),
-    )
-    .await?
-    {
-        return Ok(());
-    }
-
-    let mut data = ctx.data.write().await;
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        let _ = bonk_bot.close_all().await;
-    }
-
-    interaction
-        .create_response(&ctx.http, response_message("Goodbye!"))
-        .await?;
-
-    std::process::exit(0);
 }
 
 pub async fn ping(
@@ -159,7 +48,7 @@ pub async fn ping(
     if help_check(
         ctx,
         interaction,
-        args,
+        &args,
         "This is a ping command.\n\nUsage: ping",
     )
     .await?
@@ -174,14 +63,68 @@ pub async fn ping(
     Ok(())
 }
 
-pub async fn help_check(
+pub async fn a(
     ctx: &serenity::all::Context,
     interaction: &CommandInteraction,
     args: Vec<&str>,
+) -> Result<()> {
+    if help_check(ctx, interaction, &args, "Just a test :3").await? {
+        return Ok(());
+    }
+
+    let config = {
+        let data = ctx.data.read().await;
+        data.get::<super::ConfigKey>().cloned()
+    };
+
+    if let Some(config) = config {
+        if config.bot_admin.contains(&interaction.user.id.get()) {
+            match args.get(0) {
+                Some(&subcommand) => match subcommand {
+                    "open" | "o" => admin_commands::open(ctx, interaction, args).await?,
+                    "shutdown" | "sd" => admin_commands::shutdown(ctx, interaction, args).await?,
+                    "closeall" | "ca" => admin_commands::closeall(ctx, interaction, args).await?,
+                    _ => {
+                        interaction
+                            .create_response(
+                                &ctx.http,
+                                response_message(format!(
+                                    "Unknown command \"{}\". Run \"help\" for a list of commands.",
+                                    subcommand
+                                )),
+                            )
+                            .await?;
+                    }
+                },
+                None => {
+                    admin_commands::admin_help(ctx, interaction).await?;
+                }
+            }
+        } else {
+            interaction
+                .create_response(&ctx.http, response_message("You aren't an admin, silly!"))
+                .await?;
+        }
+    } else {
+        interaction
+            .create_response(
+                &ctx.http,
+                response_message("Error: Missing or invalid config data."),
+            )
+            .await?;
+    }
+
+    Ok(())
+}
+
+pub async fn help_check(
+    ctx: &serenity::all::Context,
+    interaction: &CommandInteraction,
+    args: &Vec<&str>,
     help_message: &str,
 ) -> Result<bool> {
     if let Some(subcommand) = args.get(0) {
-        if let "help" | "h" = *subcommand {
+        if let "help" | "h" | "?" = *subcommand {
             interaction
                 .create_response(&ctx.http, response_message(help_message))
                 .await?;

@@ -1,4 +1,6 @@
 /target
+
 .env
+config.toml
 /dependencies/Injector.js
 screenshot.png

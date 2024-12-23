@@ -1,0 +1,14 @@
+# Required
+
+name = "Test room"
+max_players = 8
+min_level = 1
+# "Football", "Simple", "DeathArrows", "Arrows", "Grapple", "VTOL", "Classic"
+mode = "Classic"
+rounds = 8
+
+# Optional
+
+headless = true
+password = "Super secret password"
+unlisted = true
