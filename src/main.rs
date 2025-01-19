@@ -14,6 +14,7 @@ use serenity::{
     async_trait,
     prelude::TypeMapKey,
 };
+use sqlx::Row;
 
 struct Handler;
 
@@ -142,7 +143,14 @@ async fn main() -> Result<()> {
         .event_handler(Handler)
         .await?;
 
-    c.start().await?;
+    //c.start().await?; TODO
+
+    let db = sqlx::postgres::PgPool::connect(&dotenv::var("DATABASE_URL")?).await?;
+
+    let res = sqlx::query("SELECT 1 + 1 as sum").fetch_one(&db).await?;
+
+    let sum: i32 = res.get("sum");
+    println!("Sum: {}", sum);
 
     Ok(())
 }
