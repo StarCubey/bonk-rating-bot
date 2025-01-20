@@ -1,6 +1,8 @@
 mod bonk_bot;
 mod discord_commands;
 
+use std::fmt::Display;
+
 use anyhow::{Context, Result};
 use bonk_bot::{BonkBotKey, BonkBotValue};
 use dotenv;
@@ -27,6 +29,16 @@ impl TypeMapKey for ConfigKey {
 #[derive(Deserialize, Clone)]
 pub struct Config {
     bot_admin: Vec<u64>,
+}
+
+pub struct DatabaseKey;
+
+impl TypeMapKey for DatabaseKey {
+    type Value = DatabaseValue;
+}
+
+pub struct DatabaseValue {
+    db: sqlx::Pool<sqlx::Postgres>,
 }
 
 #[async_trait]
@@ -76,6 +88,20 @@ impl EventHandler for Handler {
                 data.insert::<ConfigKey>(config);
             }
         }
+
+        let db = sqlx::postgres::PgPool::connect(
+            &dotenv::var("DATABASE_URL").expect("Missing database URL."),
+        )
+        .await
+        .expect("Failed to connect to databse.");
+
+        let res = sqlx::migrate!("./migrations").run(&db).await;
+
+        if let Err(e) = res {
+            println!("{e}");
+        };
+
+        data.insert::<DatabaseKey>(DatabaseValue { db });
     }
 
     async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {
@@ -144,13 +170,6 @@ async fn main() -> Result<()> {
         .await?;
 
     //c.start().await?; TODO
-
-    let db = sqlx::postgres::PgPool::connect(&dotenv::var("DATABASE_URL")?).await?;
-
-    let res = sqlx::query("SELECT 1 + 1 as sum").fetch_one(&db).await?;
-
-    let sum: i32 = res.get("sum");
-    println!("Sum: {}", sum);
 
     Ok(())
 }
