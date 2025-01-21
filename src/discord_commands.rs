@@ -1,5 +1,7 @@
 mod admin_commands;
 
+use std::any::Any;
+
 use anyhow::Result;
 use serenity::all::{
     CommandInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -70,6 +72,26 @@ pub async fn a(
 ) -> Result<()> {
     if help_check(ctx, interaction, &args, "Just a test :3").await? {
         return Ok(());
+    }
+
+    let db = {
+        let data = ctx.data.read().await;
+        data.get::<super::DatabaseKey>().cloned()
+    };
+
+    if let Some(db) = db {
+        sqlx::query("SELECT reference_id FROM admins")
+            .fetch_all(db.db.as_ref())
+            .await?;
+        //TODO I need to add logic here after figuring out the i64 u64 thing.
+        //TODO I need to delete the old code below after.
+    } else {
+        interaction
+            .create_response(
+                &ctx.http,
+                response_message("Error: Can't connect to database."),
+            )
+            .await?;
     }
 
     let config = {

@@ -1,7 +1,7 @@
 mod bonk_bot;
 mod discord_commands;
 
-use std::fmt::Display;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bonk_bot::{BonkBotKey, BonkBotValue};
@@ -16,7 +16,6 @@ use serenity::{
     async_trait,
     prelude::TypeMapKey,
 };
-use sqlx::Row;
 
 struct Handler;
 
@@ -37,8 +36,9 @@ impl TypeMapKey for DatabaseKey {
     type Value = DatabaseValue;
 }
 
+#[derive(Clone)]
 pub struct DatabaseValue {
-    db: sqlx::Pool<sqlx::Postgres>,
+    db: Arc<sqlx::PgPool>,
 }
 
 #[async_trait]
@@ -101,7 +101,7 @@ impl EventHandler for Handler {
             println!("{e}");
         };
 
-        data.insert::<DatabaseKey>(DatabaseValue { db });
+        data.insert::<DatabaseKey>(DatabaseValue { db: Arc::new(db) });
     }
 
     async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {
