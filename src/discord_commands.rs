@@ -1,22 +1,34 @@
 mod admin_commands;
 
-use std::any::Any;
-
 use anyhow::Result;
 use serenity::all::{
     CommandInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
     EditInteractionResponse,
 };
+use sqlx::Row;
 
 pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction) -> Result<()> {
-    let config = {
+    let owner: u64 = dotenv::var("DISCORD_USER_ID")?.parse()?;
+    let user = &interaction.user.id.get();
+
+    let db = {
         let data = ctx.data.read().await;
-        data.get::<super::ConfigKey>().cloned()
+        data.get::<super::DatabaseKey>().cloned()
     };
 
-    let mut admin = false;
-    if let Some(config) = config {
-        admin = config.bot_admin.contains(&interaction.user.id.get());
+    let mut admin = *user == owner;
+    if let Some(db) = db {
+        let rows = sqlx::query("SELECT \"id\" FROM admins WHERE \"type\" = 'user'")
+            .fetch_all(db.db.as_ref())
+            .await?;
+
+        let ids: Vec<u64> = rows
+            .iter()
+            .filter_map(|r| r.try_get::<i64, _>("id").ok())
+            .map(|r| r as u64)
+            .collect();
+
+        admin = admin || ids.contains(user);
     }
 
     interaction
@@ -74,33 +86,26 @@ pub async fn a(
         return Ok(());
     }
 
+    let owner: u64 = dotenv::var("DISCORD_USER_ID")?.parse()?;
+    let user = &interaction.user.id.get();
+
     let db = {
         let data = ctx.data.read().await;
         data.get::<super::DatabaseKey>().cloned()
     };
 
     if let Some(db) = db {
-        sqlx::query("SELECT reference_id FROM admins")
+        let rows = sqlx::query("SELECT \"id\" FROM admins WHERE \"type\" = 'user'")
             .fetch_all(db.db.as_ref())
             .await?;
-        //TODO I need to add logic here after figuring out the i64 u64 thing.
-        //TODO I need to delete the old code below after.
-    } else {
-        interaction
-            .create_response(
-                &ctx.http,
-                response_message("Error: Can't connect to database."),
-            )
-            .await?;
-    }
 
-    let config = {
-        let data = ctx.data.read().await;
-        data.get::<super::ConfigKey>().cloned()
-    };
+        let ids: Vec<u64> = rows
+            .iter()
+            .filter_map(|r| r.try_get::<i64, _>("id").ok())
+            .map(|r| r as u64)
+            .collect();
 
-    if let Some(config) = config {
-        if config.bot_admin.contains(&interaction.user.id.get()) {
+        if ids.contains(user) || *user == owner {
             match args.get(0) {
                 Some(&subcommand) => match subcommand {
                     "open" | "o" => admin_commands::open(ctx, interaction, args).await?,
@@ -124,14 +129,14 @@ pub async fn a(
             }
         } else {
             interaction
-                .create_response(&ctx.http, response_message("You aren't an admin, silly!"))
+                .create_response(&ctx.http, response_message("You aren't an admin!"))
                 .await?;
         }
     } else {
         interaction
             .create_response(
                 &ctx.http,
-                response_message("Error: Missing or invalid config data."),
+                response_message("Error: Can't connect to database."),
             )
             .await?;
     }

@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
         .event_handler(Handler)
         .await?;
 
-    //c.start().await?; TODO
+    c.start().await?;
 
     Ok(())
 }
