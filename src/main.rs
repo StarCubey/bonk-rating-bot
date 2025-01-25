@@ -6,7 +6,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use bonk_bot::{BonkBotKey, BonkBotValue};
 use dotenv;
-use serde::Deserialize;
 use serenity::{
     all::{
         ActivityData, Command, CommandInteraction, CreateCommand, CreateCommandOption,
@@ -18,17 +17,6 @@ use serenity::{
 };
 
 struct Handler;
-
-pub struct ConfigKey;
-
-impl TypeMapKey for ConfigKey {
-    type Value = Config;
-}
-
-#[derive(Deserialize, Clone)]
-pub struct Config {
-    bot_admin: Vec<u64>,
-}
 
 pub struct DatabaseKey;
 
@@ -69,6 +57,16 @@ impl EventHandler for Handler {
                     .required(true),
                 )
                 .add_option(CreateCommandOption::new(
+                    serenity::all::CommandOptionType::User,
+                    "user",
+                    "Add a user here if applicable.",
+                ))
+                .add_option(CreateCommandOption::new(
+                    serenity::all::CommandOptionType::Channel,
+                    "channel",
+                    "Add a channel here if applicable.",
+                ))
+                .add_option(CreateCommandOption::new(
                     serenity::all::CommandOptionType::Attachment,
                     "attachment",
                     "Add an attachment here if applicable.",
@@ -82,12 +80,6 @@ impl EventHandler for Handler {
         let mut data = ctx.data.write().await;
 
         data.insert::<BonkBotKey>(BonkBotValue::new());
-
-        if let Ok(config) = tokio::fs::read_to_string("config.toml").await {
-            if let Ok(config) = toml::de::from_str(config.as_str()) {
-                data.insert::<ConfigKey>(config);
-            }
-        }
 
         let db = sqlx::postgres::PgPool::connect(
             &dotenv::var("DATABASE_URL").expect("Missing database URL."),

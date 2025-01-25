@@ -1,5 +1,8 @@
 CREATE TABLE admins(
-	"type" TEXT NOT NULL CHECK ("type" IN ('user', 'role')),
-	"id" BIGINT NOT NULL,
-	PRIMARY KEY ("type", "id")
+	id BIGINT PRIMARY KEY NOT NULL
+);
+
+CREATE TABLE channels(
+	type TEXT PRIMARY KEY NOT NULL,
+	id BIGINT NOT NULL
 );

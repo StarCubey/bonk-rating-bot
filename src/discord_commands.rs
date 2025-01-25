@@ -5,7 +5,6 @@ use serenity::all::{
     CommandInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
     EditInteractionResponse,
 };
-use sqlx::Row;
 
 pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction) -> Result<()> {
     let owner: u64 = dotenv::var("DISCORD_USER_ID")?.parse()?;
@@ -18,15 +17,11 @@ pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction
 
     let mut admin = *user == owner;
     if let Some(db) = db {
-        let rows = sqlx::query("SELECT \"id\" FROM admins WHERE \"type\" = 'user'")
+        let rows = sqlx::query!("SELECT id FROM admins")
             .fetch_all(db.db.as_ref())
             .await?;
 
-        let ids: Vec<u64> = rows
-            .iter()
-            .filter_map(|r| r.try_get::<i64, _>("id").ok())
-            .map(|r| r as u64)
-            .collect();
+        let ids: Vec<u64> = rows.iter().map(|r| r.id as u64).collect();
 
         admin = admin || ids.contains(user);
     }
@@ -80,9 +75,9 @@ pub async fn ping(
 pub async fn a(
     ctx: &serenity::all::Context,
     interaction: &CommandInteraction,
-    args: Vec<&str>,
+    mut args: Vec<&str>,
 ) -> Result<()> {
-    if help_check(ctx, interaction, &args, "Just a test :3").await? {
+    if help_check(ctx, interaction, &args, "Shows admin commands.").await? {
         return Ok(());
     }
 
@@ -95,19 +90,18 @@ pub async fn a(
     };
 
     if let Some(db) = db {
-        let rows = sqlx::query("SELECT \"id\" FROM admins WHERE \"type\" = 'user'")
+        let rows = sqlx::query!("SELECT id FROM admins")
             .fetch_all(db.db.as_ref())
             .await?;
 
-        let ids: Vec<u64> = rows
-            .iter()
-            .filter_map(|r| r.try_get::<i64, _>("id").ok())
-            .map(|r| r as u64)
-            .collect();
+        let ids: Vec<u64> = rows.iter().map(|r| r.id as u64).collect();
 
         if ids.contains(user) || *user == owner {
-            match args.get(0) {
-                Some(&subcommand) => match subcommand {
+            if let Some(&subcommand) = args.get(0) {
+                args.remove(0);
+                match subcommand {
+                    "admins" => admin_commands::admins(ctx, interaction, args).await?,
+                    "roomlog" => admin_commands::roomlog(ctx, interaction, args).await?,
                     "open" | "o" => admin_commands::open(ctx, interaction, args).await?,
                     "shutdown" | "sd" => admin_commands::shutdown(ctx, interaction, args).await?,
                     "closeall" | "ca" => admin_commands::closeall(ctx, interaction, args).await?,
@@ -122,10 +116,9 @@ pub async fn a(
                             )
                             .await?;
                     }
-                },
-                None => {
-                    admin_commands::admin_help(ctx, interaction).await?;
                 }
+            } else {
+                admin_commands::admin_help(ctx, interaction).await?;
             }
         } else {
             interaction

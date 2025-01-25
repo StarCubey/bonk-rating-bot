@@ -1,5 +1,5 @@
-use anyhow::{Context, Result};
-use serenity::all::CommandInteraction;
+use anyhow::{anyhow, Context, Result};
+use serenity::all::{CommandDataOptionValue, CommandInteraction};
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 
@@ -15,12 +15,225 @@ pub async fn admin_help(
             response_message(concat!(
                 "Here's a list of admin commands.\n\n",
                 "__Commands:__\n",
+                "**admins <add/remove/list>:** Edits the list of admins who have access to the \"a\" command.\n",
+                "**roomlog <get/set/clear>:** Edits the room log channel where room links are posted.\n",
                 "**open, o:** Creates a room from a room config file!\n",
                 "**closeall, ca:** Closes all rooms.\n",
                 "**shutdown, sd:** Shuts down the bot. This is the reccomended way to do it.\n",
             )),
         )
         .await?;
+
+    Ok(())
+}
+
+pub async fn admins(
+    ctx: &serenity::all::Context,
+    interaction: &CommandInteraction,
+    args: Vec<&str>,
+) -> Result<()> {
+    if help_check(
+        ctx,
+        interaction,
+        &args,
+        concat!(
+            "Edits the list of admins who have access to the \"a\" command.",
+            " A user must be specified with the \"user:\" option for add and remove."
+        ),
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    let db = {
+        let data = ctx.data.read().await;
+        data.get::<crate::DatabaseKey>().cloned()
+    }
+    .ok_or(anyhow!("Failed to connect to database."))?;
+
+    if let Some(&option) = args.get(0) {
+        match option {
+            "add" | "a" => {
+                let user = &interaction
+                    .data
+                    .options
+                    .iter()
+                    .find(|o| o.name == "user")
+                    .context("User not selected.")?
+                    .value;
+
+                if let CommandDataOptionValue::User(user) = user {
+                    let user = user.get() as i64;
+
+                    sqlx::query!("INSERT INTO admins (id) VALUES ($1)", user)
+                        .execute(db.db.as_ref())
+                        .await?;
+
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(format!("<@{}> is now an admin!", user)),
+                        )
+                        .await?;
+                }
+            }
+            "remove" | "r" => {
+                let user = &interaction
+                    .data
+                    .options
+                    .iter()
+                    .find(|o| o.name == "user")
+                    .context("User not selected.")?
+                    .value;
+
+                if let CommandDataOptionValue::User(user) = user {
+                    let user = user.get() as i64;
+
+                    sqlx::query!("DELETE FROM admins WHERE id = $1", user)
+                        .execute(db.db.as_ref())
+                        .await?;
+
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(format!("<@{}> is no longer admin.", user)),
+                        )
+                        .await?;
+                }
+            }
+            "list" | "ls" => {
+                let users: Vec<u64> = sqlx::query!("SELECT id FROM admins")
+                    .fetch_all(db.db.as_ref())
+                    .await?
+                    .iter()
+                    .map(|r| r.id as u64)
+                    .collect();
+
+                let mut output = "Admin list:".to_string();
+                output.push_str(
+                    &users
+                        .iter()
+                        .map(|u| format!("\n<@{}>", u))
+                        .collect::<Vec<String>>()
+                        .concat(),
+                );
+
+                interaction
+                    .create_response(&ctx.http, response_message(output))
+                    .await?;
+            }
+            _ => {
+                return Err(anyhow!("Invalid argument."));
+            }
+        }
+    } else {
+        return Err(anyhow!("Missing argument for \"a admins\" command."));
+    }
+
+    Ok(())
+}
+
+pub async fn roomlog(
+    ctx: &serenity::all::Context,
+    interaction: &CommandInteraction,
+    args: Vec<&str>,
+) -> Result<()> {
+    if help_check(
+        ctx,
+        interaction,
+        &args,
+        concat!("Edits the room log channel where room links are posted.",),
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    let db = {
+        let data = ctx.data.read().await;
+        data.get::<crate::DatabaseKey>().cloned()
+    }
+    .ok_or(anyhow!("Failed to connect to database."))?;
+
+    if let Some(&option) = args.get(0) {
+        match option {
+            "get" | "g" => {
+                let channel = sqlx::query!("SELECT id FROM channels WHERE type = 'room log'")
+                    .fetch_all(db.db.as_ref())
+                    .await?;
+
+                if channel.len() == 0 {
+                    interaction
+                        .create_response(&ctx.http, response_message("Room log is not set."))
+                        .await?;
+                } else {
+                    let channel = channel.get(0).context("Missing room id.")?.id as u64;
+
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(format!("The room log channel is <#{}>.", channel)),
+                        )
+                        .await?;
+                }
+            }
+            "set" | "s" => {
+                let rows = sqlx::query!("SELECT id FROM channels WHERE type = 'room log'")
+                    .fetch_all(db.db.as_ref())
+                    .await?;
+
+                let channel = &interaction
+                    .data
+                    .options
+                    .iter()
+                    .find(|o| o.name == "channel")
+                    .context("Channel not selected.")?
+                    .value;
+
+                if let CommandDataOptionValue::Channel(channel) = channel {
+                    let channel = channel.get() as i64;
+
+                    if rows.len() == 0 {
+                        sqlx::query!(
+                            "INSERT INTO channels (id, type) VALUES ($1, 'room log')",
+                            channel
+                        )
+                        .execute(db.db.as_ref())
+                        .await?;
+                    } else {
+                        sqlx::query!(
+                            "UPDATE channels SET id = $1 WHERE type = 'room log'",
+                            channel
+                        )
+                        .execute(db.db.as_ref())
+                        .await?;
+                    }
+
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(format!("Room log is now <#{}>.", channel as u64)),
+                        )
+                        .await?;
+                }
+            }
+            "clear" | "c" => {
+                sqlx::query!("DELETE FROM channels WHERE type = 'room log'")
+                    .execute(db.db.as_ref())
+                    .await?;
+
+                interaction
+                    .create_response(&ctx.http, response_message("Room log cleared."))
+                    .await?;
+            }
+            _ => {
+                return Err(anyhow!("Invalid argument."));
+            }
+        }
+    } else {
+        return Err(anyhow!("Missing argument for /a roomlog command."));
+    }
 
     Ok(())
 }
