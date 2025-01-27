@@ -24,7 +24,7 @@ pub struct CreationReply {
     pub room_link: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct RoomParameters {
     pub headless: Option<bool>,
     pub name: String,
@@ -36,7 +36,7 @@ pub struct RoomParameters {
     pub rounds: i32,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub enum Mode {
     Football,
     Simple,

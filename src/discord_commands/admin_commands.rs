@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use serenity::all::{CommandDataOptionValue, CommandInteraction};
+use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction};
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 
@@ -275,7 +275,7 @@ pub async fn open(
 
     let mut data = ctx.data.write().await;
     if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.open_room(room_parameters).await {
+        match bonk_bot.open_room(room_parameters.clone()).await {
             Ok(room_link) => {
                 interaction
                     .edit_response(
@@ -283,6 +283,21 @@ pub async fn open(
                         edit_message(format!("Room opened: {}", room_link)),
                     )
                     .await?;
+
+                let db = data.get::<crate::DatabaseKey>().cloned();
+
+                if let Some(db) = db {
+                    let channel = sqlx::query!("SELECT id FROM channels WHERE type = 'room log'")
+                        .fetch_all(db.db.as_ref())
+                        .await?;
+
+                    if let Some(channel) = channel.get(0) {
+                        let channel = ChannelId::new(channel.id as u64);
+                        channel
+                            .say(&ctx.http, format!("{} {}", room_parameters.name, room_link))
+                            .await?;
+                    }
+                }
             }
             Err(e) => {
                 interaction
