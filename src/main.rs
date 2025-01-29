@@ -153,9 +153,8 @@ impl EventHandler for Handler {
 async fn main() -> Result<()> {
     let token = dotenv::var("DISCORD_TOKEN")?;
 
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::DIRECT_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::DIRECT_MESSAGES;
+    // | GatewayIntents::MESSAGE_CONTENT;
 
     let mut c = serenity::all::Client::builder(&token, intents)
         .event_handler(Handler)

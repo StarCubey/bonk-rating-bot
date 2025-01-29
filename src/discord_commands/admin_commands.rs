@@ -294,7 +294,10 @@ pub async fn open(
                     if let Some(channel) = channel.get(0) {
                         let channel = ChannelId::new(channel.id as u64);
                         channel
-                            .say(&ctx.http, format!("{} {}", room_parameters.name, room_link))
+                            .say(
+                                &ctx.http,
+                                format!("Room opened:\n\n{}\n{}", room_parameters.name, room_link),
+                            )
                             .await?;
                     }
                 }

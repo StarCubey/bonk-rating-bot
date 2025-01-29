@@ -38,7 +38,7 @@ pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction
                 )
                 .to_string()
                     + if admin {
-                        "\n**a**: Runs an admin command."
+                        "\n**a:** Runs an admin command."
                     } else {
                         ""
                     },

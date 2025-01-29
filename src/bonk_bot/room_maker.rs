@@ -181,7 +181,7 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
         Mode::Classic => "b",
     };
 
-    let mut injector_file = File::open("dependencies/Injector.js").await?;
+    let mut injector_file = File::open("dependencies/Code Injector - Bonk.io.user.js").await?;
     let mut injector = String::new();
     injector_file.read_to_string(&mut injector).await?;
 
