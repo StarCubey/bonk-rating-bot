@@ -66,7 +66,8 @@ pub async fn admins(
                 if let CommandDataOptionValue::User(user) = user {
                     let user = user.get() as i64;
 
-                    sqlx::query!("INSERT INTO admins (id) VALUES ($1)", user)
+                    sqlx::query("INSERT INTO admins (id) VALUES ($1)")
+                        .bind(user)
                         .execute(db.db.as_ref())
                         .await?;
 
@@ -90,7 +91,8 @@ pub async fn admins(
                 if let CommandDataOptionValue::User(user) = user {
                     let user = user.get() as i64;
 
-                    sqlx::query!("DELETE FROM admins WHERE id = $1", user)
+                    sqlx::query("DELETE FROM admins WHERE id = $1")
+                        .bind(user)
                         .execute(db.db.as_ref())
                         .await?;
 
@@ -103,12 +105,11 @@ pub async fn admins(
                 }
             }
             "list" | "ls" => {
-                let users: Vec<u64> = sqlx::query!("SELECT id FROM admins")
+                let users: Vec<(i64,)> = sqlx::query_as("SELECT id FROM admins")
                     .fetch_all(db.db.as_ref())
-                    .await?
-                    .iter()
-                    .map(|r| r.id as u64)
-                    .collect();
+                    .await?;
+
+                let users: Vec<u64> = users.iter().map(|r| r.0 as u64).collect();
 
                 let mut output = "Admin list:".to_string();
                 output.push_str(
@@ -159,16 +160,17 @@ pub async fn roomlog(
     if let Some(&option) = args.get(0) {
         match option {
             "get" | "g" => {
-                let channel = sqlx::query!("SELECT id FROM channels WHERE type = 'room log'")
-                    .fetch_all(db.db.as_ref())
-                    .await?;
+                let channel: Vec<(i64,)> =
+                    sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                        .fetch_all(db.db.as_ref())
+                        .await?;
 
                 if channel.len() == 0 {
                     interaction
                         .create_response(&ctx.http, response_message("Room log is not set."))
                         .await?;
                 } else {
-                    let channel = channel.get(0).context("Missing room id.")?.id as u64;
+                    let channel = channel.get(0).context("Missing room id.")?.0 as u64;
 
                     interaction
                         .create_response(
@@ -179,9 +181,10 @@ pub async fn roomlog(
                 }
             }
             "set" | "s" => {
-                let rows = sqlx::query!("SELECT id FROM channels WHERE type = 'room log'")
-                    .fetch_all(db.db.as_ref())
-                    .await?;
+                let rows: Vec<(i64,)> =
+                    sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                        .fetch_all(db.db.as_ref())
+                        .await?;
 
                 let channel = &interaction
                     .data
@@ -195,19 +198,15 @@ pub async fn roomlog(
                     let channel = channel.get() as i64;
 
                     if rows.len() == 0 {
-                        sqlx::query!(
-                            "INSERT INTO channels (id, type) VALUES ($1, 'room log')",
-                            channel
-                        )
-                        .execute(db.db.as_ref())
-                        .await?;
+                        sqlx::query("INSERT INTO channels (id, type) VALUES ($1, 'room log')")
+                            .bind(channel)
+                            .execute(db.db.as_ref())
+                            .await?;
                     } else {
-                        sqlx::query!(
-                            "UPDATE channels SET id = $1 WHERE type = 'room log'",
-                            channel
-                        )
-                        .execute(db.db.as_ref())
-                        .await?;
+                        sqlx::query("UPDATE channels SET id = $1 WHERE type = 'room log'")
+                            .bind(channel)
+                            .execute(db.db.as_ref())
+                            .await?;
                     }
 
                     interaction
@@ -219,7 +218,7 @@ pub async fn roomlog(
                 }
             }
             "clear" | "c" => {
-                sqlx::query!("DELETE FROM channels WHERE type = 'room log'")
+                sqlx::query("DELETE FROM channels WHERE type = 'room log'")
                     .execute(db.db.as_ref())
                     .await?;
 
@@ -287,12 +286,13 @@ pub async fn open(
                 let db = data.get::<crate::DatabaseKey>().cloned();
 
                 if let Some(db) = db {
-                    let channel = sqlx::query!("SELECT id FROM channels WHERE type = 'room log'")
-                        .fetch_all(db.db.as_ref())
-                        .await?;
+                    let channel: Vec<(i64,)> =
+                        sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                            .fetch_all(db.db.as_ref())
+                            .await?;
 
                     if let Some(channel) = channel.get(0) {
-                        let channel = ChannelId::new(channel.id as u64);
+                        let channel = ChannelId::new(channel.0 as u64);
                         channel
                             .say(
                                 &ctx.http,

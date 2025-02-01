@@ -2,6 +2,10 @@
 
 Installation is somewhat involved. This is a overview of what needs to be done in order to install the bot. Not everything is described in detail.
 
+## Rust
+
+Obviously, Rust along with any dependencies needed for compilation will need to be installed.
+
 ## Chrome Driver
 
 You can install chrome driver here: https://googlechromelabs.github.io/chrome-for-testing/
@@ -31,7 +35,14 @@ Then, you need to set the BOT_OWNER environment variable to your user id to ensu
 
 ## PostgreSQL
 
-Create an empty database and put the database url in the DATABASE_URL environment variable.
+Start by installing PostgreSQL. on debian based distros, it can be installed like so:
+
+```sh
+sudo apt update
+sudo apt install postgresql
+```
+
+Next, you'll need to set the DATABASE_URL environment variable. With minimal setup, you could just set a password for the postgres user and connect to localhost.
 
 ## Environment Varibales
 

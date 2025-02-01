@@ -17,11 +17,11 @@ pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction
 
     let mut admin = *user == owner;
     if let Some(db) = db {
-        let rows = sqlx::query!("SELECT id FROM admins")
+        let rows: Vec<(i64,)> = sqlx::query_as("SELECT id FROM admins")
             .fetch_all(db.db.as_ref())
             .await?;
 
-        let ids: Vec<u64> = rows.iter().map(|r| r.id as u64).collect();
+        let ids: Vec<u64> = rows.iter().map(|r| r.0 as u64).collect();
 
         admin = admin || ids.contains(user);
     }
@@ -90,11 +90,11 @@ pub async fn a(
     };
 
     if let Some(db) = db {
-        let rows = sqlx::query!("SELECT id FROM admins")
+        let rows: Vec<(i64,)> = sqlx::query_as("SELECT id FROM admins")
             .fetch_all(db.db.as_ref())
             .await?;
 
-        let ids: Vec<u64> = rows.iter().map(|r| r.id as u64).collect();
+        let ids: Vec<u64> = rows.iter().map(|r| r.0 as u64).collect();
 
         if ids.contains(user) || *user == owner {
             if let Some(&subcommand) = args.get(0) {
