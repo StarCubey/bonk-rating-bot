@@ -1,11 +1,10 @@
-use std::time::Duration;
-
 use anyhow::Context;
 use anyhow::{anyhow, Result};
 use fantoccini::error::CmdError;
 use fantoccini::{ClientBuilder, Locator};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
@@ -339,10 +338,12 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
     println!("Room created!");
 
     //Game creation test.
+    /*
     c.find(Locator::Id("newbonklobby_startbutton"))
         .await?
         .click()
         .await?;
+    */
 
     Ok(room_link)
 }
