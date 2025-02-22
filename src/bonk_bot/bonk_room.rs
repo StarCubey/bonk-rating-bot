@@ -1,9 +1,11 @@
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use fantoccini::Locator;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::from_value;
+use serde_json::json;
 use tokio::{
     sync::mpsc::{self, error::TryRecvError},
     time::{self, Instant},
@@ -17,9 +19,7 @@ pub enum BonkRoomMessage {
 pub struct BonkRoom {
     rx: mpsc::Receiver<BonkRoomMessage>,
     client: fantoccini::Client,
-    state: RoomState,
-    state_changed: Instant,
-    chat_checked: Instant,
+    chat_queue: VecDeque<String>,
 }
 
 enum RoomState {
@@ -40,22 +40,26 @@ impl BonkRoom {
         BonkRoom {
             rx,
             client,
-            state: RoomState::Idle,
-            state_changed: Instant::now(),
-            chat_checked: Instant::now(),
+            chat_queue: VecDeque::new(),
         }
     }
 
     pub async fn run(&mut self) {
-        let chat_wait_time = Duration::from_millis(250);
+        let chat_wait_time = Duration::from_millis(200);
+        let message_rate_limit = Duration::from_secs(3);
+
         let mut chat_next_index = 0;
+        let mut state = RoomState::Idle;
+        let mut state_changed = Instant::now();
+        let mut chat_checked = Instant::now();
+        let mut message_sent = Instant::now();
 
         loop {
-            if let RoomState::Idle = self.state {
-                if self.state_changed.elapsed() > Duration::from_secs(10) {
+            if let RoomState::Idle = state {
+                if state_changed.elapsed() > Duration::from_secs(10) {
                     //TODO select the next player in queue and ask them to pick an opponent.
-                    self.state = RoomState::BeforeGame;
-                    self.state_changed = Instant::now();
+                    state = RoomState::BeforeGame;
+                    state_changed = Instant::now();
                 }
             }
 
@@ -67,7 +71,7 @@ impl BonkRoom {
                 }
             }
 
-            if self.chat_checked.elapsed() >= chat_wait_time {
+            if chat_checked.elapsed() >= chat_wait_time {
                 let players = self
                     .client
                     .execute("return window.bonkHost.players;", vec![])
@@ -95,7 +99,7 @@ impl BonkRoom {
                                 .await
                             {
                                 if let Ok(content) = content.html(true).await {
-                                    println!("{}", content); //TODO debug
+                                    self.parse_command(content).await;
                                 }
                             }
                         }
@@ -104,11 +108,45 @@ impl BonkRoom {
                     }
                 }
 
-                self.chat_checked = Instant::now();
+                chat_checked = Instant::now();
             }
 
-            //TODO use a switch statement instead of waiting for some arbitrary amount of time.
-            time::sleep(Duration::from_millis(250)).await;
+            if message_sent.elapsed() >= message_rate_limit && self.chat_queue.len() > 0 {
+                if let Some(message) = self.chat_queue.pop_front() {
+                    let _ = self.client.execute(
+                        "window.bonkHost.toolFunctions.networkEngine.chatMessage(arguments[0]);",
+                        vec![json!(message)],
+                    ).await;
+
+                    message_sent = Instant::now();
+                }
+            }
+
+            time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    async fn parse_command(&mut self, command: String) {
+        println!("{}", command);
+        if let Some(command) = command.strip_prefix("!") {
+            let mut command: Vec<&str> = command.split(' ').collect();
+
+            match command.remove(0) {
+                "help" => {
+                    self.chat_queue.push_back(
+                        "Use !ping to ping me. There are no other commands :3".to_string(),
+                    );
+                }
+                "ping" => {
+                    self.chat_queue.push_back("Pong!".to_string());
+                }
+                input => {
+                    self.chat_queue.push_back(format!(
+                        "Unknown command \"{}\". Run !help for a list of commands.",
+                        input
+                    ));
+                }
+            }
         }
     }
 }
