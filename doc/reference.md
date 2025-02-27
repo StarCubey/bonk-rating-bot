@@ -1,5 +1,14 @@
 # Reference
 
+## Bonk.io Commands
+
+```
+!help: Lists commands.
+!ping: Pong!
+!queue: Checks the queue. Spots will be held for some time when players leave.
+!pick, !p <name>: When prompted, this command chooses and opponent to play against.
+```
+
 ## Discord Base Commands
 
 All commands start with /sgr with the command written in the command field.

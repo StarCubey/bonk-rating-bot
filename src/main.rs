@@ -1,6 +1,9 @@
 mod bonk_bot;
 mod discord_commands;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result};

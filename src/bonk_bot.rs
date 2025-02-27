@@ -1,3 +1,4 @@
+pub mod bonk_commands;
 pub mod bonk_room;
 pub mod room_maker;
 

@@ -78,7 +78,7 @@ impl RoomMaker {
                         match make_room(&c, &message.room_parameters).await {
                             Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
-                                let mut bonkroom = BonkRoom::new(rx, c);
+                                let mut bonkroom = BonkRoom::new(rx, c, message.room_parameters);
                                 tokio::spawn(async move {
                                     bonkroom.run().await;
                                 });
@@ -330,8 +330,10 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
     .await?;
 
     c.execute(
-        "window.bonkHost.bonkSetMode(arguments[0].mode);",
-        vec![json!({"mode": mode})],
+        "window.bonkHost.bonkSetMode(arguments[0]);\
+        window.bonkHost.toolFunctions.networkEngine.changeOwnTeam(0);\
+        window.bonkHost.toolFunctions.networkEngine.sendNoHostSwap();",
+        vec![json!(mode)],
     )
     .await?;
 
