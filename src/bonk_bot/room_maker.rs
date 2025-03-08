@@ -337,6 +337,11 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
     )
     .await?;
 
+    c.find(Locator::Id("newbonklobby_teamlockbutton"))
+        .await?
+        .click()
+        .await?;
+
     println!("Room created!");
 
     //Game creation test.

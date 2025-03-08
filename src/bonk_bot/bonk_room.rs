@@ -24,11 +24,13 @@ pub struct BonkRoom {
     pub client: fantoccini::Client,
     pub room_parameters: RoomParameters,
     pub state: RoomState,
+    pub state_changed: Instant,
     pub chat_queue: VecDeque<String>,
     pub player_data: PlayerData,
 }
 
 pub struct PlayerData {
+    pub players: Vec<(usize, Player)>,
     pub queue: Vec<(String, Instant)>,
     pub team_flip: bool,
     pub captain: (usize, Player),
@@ -39,20 +41,24 @@ pub struct PlayerData {
 pub enum RoomState {
     Idle,
     BeforeGame,
+    //MapSelection,
+    //Ready,
     DuringGame,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct Player {
     pub team: i32,
+    pub ready: bool,
     #[serde(rename = "userName")]
     pub name: String,
 }
 
 impl Player {
-    fn new() -> Player {
+    pub fn new() -> Player {
         Player {
             team: 0,
+            ready: false,
             name: "".to_string(),
         }
     }
@@ -69,8 +75,10 @@ impl BonkRoom {
             client,
             room_parameters,
             state: RoomState::Idle,
+            state_changed: Instant::now(),
             chat_queue: VecDeque::new(),
             player_data: PlayerData {
+                players: Vec::new(),
                 queue: Vec::new(),
                 team_flip: false,
                 captain: (0, Player::new()),
@@ -81,53 +89,12 @@ impl BonkRoom {
     }
 
     pub async fn run(&mut self) {
-        let mut state_changed = Instant::now();
-
         let mut chat_next_index = 0;
-        let mut players: Vec<(usize, Player)> = Vec::new();
         let mut chat_checked = Instant::now();
         let mut message_sent = Instant::now();
 
         loop {
-            if let RoomState::Idle = self.state {
-                if state_changed.elapsed() > Duration::from_secs(10) {
-                    if let Some(next_player) = self.player_data.queue.get(0) {
-                        let captain = players.iter().find(|player| player.1.name == next_player.0);
-                        if let Some(captain) = captain {
-                            let mut team = 1;
-                            if let Mode::Football = self.room_parameters.mode {
-                                self.player_data.team_flip = rand::random();
-                                match self.player_data.team_flip {
-                                    false => team = 3,
-                                    true => team = 2,
-                                }
-                            }
-
-                            let _ = self
-                                .client
-                                .execute(
-                                    "window\
-                                    .bonkHost\
-                                    .toolFunctions\
-                                    .networkEngine\
-                                    .chagneOtherTeam(arguments[0], arguments[1]);",
-                                    vec![json!(captain.0), json!(team)],
-                                )
-                                .await;
-                            //Push front because high priority.
-                            self.chat_queue.push_front(format!(
-                                "{}, pick an opponent with !p <name>.",
-                                captain.1.name
-                            ));
-                            self.player_data.captain = captain.clone();
-
-                            self.state = RoomState::BeforeGame;
-                            self.player_data.pick_progress = 0;
-                            state_changed = Instant::now();
-                        }
-                    }
-                }
-            }
+            self.update_state().await;
 
             loop {
                 match self.rx.try_recv() {
@@ -139,7 +106,6 @@ impl BonkRoom {
 
             self.update_players_and_chat(
                 &mut chat_next_index,
-                &mut players,
                 &mut chat_checked,
                 &mut message_sent,
             )
@@ -149,10 +115,185 @@ impl BonkRoom {
         }
     }
 
+    async fn update_state(&mut self) {
+        let idle_time = Duration::from_secs(10);
+        let pick_time = Duration::from_secs(60);
+        let ready_time = Duration::from_secs(60);
+        let match_length = Duration::from_secs(600);
+
+        if let RoomState::Idle = self.state {
+            if self.state_changed.elapsed() > idle_time {
+                self.next_in_queue().await;
+            }
+        }
+
+        if let RoomState::BeforeGame = self.state {
+            let updated_captain = self
+                .player_data
+                .players
+                .iter()
+                .find(|p| p.0 == self.player_data.captain.0);
+            if let Some(updated_captain) = updated_captain {
+                self.player_data.captain.1.ready |= updated_captain.1.ready;
+            }
+
+            let updated_other_player = self
+                .player_data
+                .players
+                .iter()
+                .find(|p| p.0 == self.player_data.other_player.0);
+            if let Some(updated_other_player) = updated_other_player {
+                self.player_data.other_player.1.ready |= updated_other_player.1.ready;
+            }
+
+            if self.player_data.pick_progress == 0 && self.state_changed.elapsed() > pick_time {
+                self.kick_player(&self.player_data.captain.clone()).await;
+                self.next_in_queue().await;
+            } else if self.player_data.pick_progress > 0 {
+                if self.player_data.captain.1.ready && self.player_data.other_player.1.ready {
+                    let start_button = self
+                        .client
+                        .find(Locator::Id("newbonklobby_startbutton"))
+                        .await;
+                    if let Ok(start_button) = start_button {
+                        let _ = start_button.click().await;
+
+                        self.state = RoomState::DuringGame;
+                        self.state_changed = Instant::now();
+                    }
+                }
+
+                if self.state_changed.elapsed() > ready_time {
+                    self.all_to_spec().await;
+
+                    if !self.player_data.captain.1.ready {
+                        self.kick_player(&self.player_data.captain.clone()).await;
+                    }
+                    if !self.player_data.other_player.1.ready {
+                        self.kick_player(&self.player_data.other_player.clone())
+                            .await;
+                    }
+
+                    self.next_in_queue().await;
+                }
+            }
+        }
+
+        if let RoomState::DuringGame = self.state {
+            if self.state_changed.elapsed() > match_length {
+                let _ = self
+                    .client
+                    .execute(
+                        "document.getElementById('pretty_top_bar').style.top=0;",
+                        vec![],
+                    )
+                    .await;
+                let exit = self.client.find(Locator::Id("pretty_top_exit")).await;
+                if let Ok(exit) = exit {
+                    let _ = exit.click().await;
+                }
+
+                self.all_to_spec().await;
+
+                self.chat_queue.push_back("Timeout!".to_string());
+                self.state = RoomState::Idle;
+                self.state_changed = Instant::now();
+            }
+        }
+    }
+
+    async fn next_in_queue(&mut self) {
+        for next_player in &self.player_data.queue {
+            let captain = self
+                .player_data
+                .players
+                .iter()
+                .find(|player| player.1.name == next_player.0);
+            if let Some(captain) = captain {
+                let mut team = 1;
+                if let Mode::Football = self.room_parameters.mode {
+                    self.player_data.team_flip = rand::random();
+                    match self.player_data.team_flip {
+                        false => team = 3,
+                        true => team = 2,
+                    }
+                }
+
+                let _ = self
+                    .client
+                    .execute(
+                        "window\
+                                .bonkHost\
+                                .toolFunctions\
+                                .networkEngine\
+                                .changeOtherTeam(arguments[0], arguments[1]);",
+                        vec![json!(captain.0), json!(team)],
+                    )
+                    .await;
+                //Push front because high priority.
+                self.chat_queue.push_front(format!(
+                    "{}, pick an opponent with !p <name>.",
+                    captain.1.name
+                ));
+                self.player_data.captain = captain.clone();
+
+                self.state = RoomState::BeforeGame;
+                self.player_data.pick_progress = 0;
+                self.state_changed = Instant::now();
+
+                break;
+            }
+        }
+    }
+
+    async fn kick_player(&mut self, player: &(usize, Player)) {
+        let _ = self
+            .client
+            .execute(
+                "window\
+                    .bonkHost\
+                    .toolFunctions\
+                    .networkEngine\
+                    .kickPlayer(arguments[0]);",
+                vec![json!(player.0)],
+            )
+            .await;
+
+        let index = self
+            .player_data
+            .queue
+            .iter()
+            .position(|p| p.0 == player.1.name);
+        if let Some(index) = index {
+            self.player_data.queue.remove(index);
+        }
+    }
+
+    async fn all_to_spec(&mut self) {
+        let _ = self
+            .client
+            .execute(
+                "window\
+                .bonkHost\
+                .toolFunctions\
+                .networkEngine\
+                .changeOtherTeam(arguments[0], 0);\
+            window\
+                .bonkHost\
+                .toolFunctions\
+                .networkEngine\
+                .changeOtherTeam(arguments[1], 0);",
+                vec![
+                    json!(self.player_data.captain.0),
+                    json!(self.player_data.other_player.0),
+                ],
+            )
+            .await;
+    }
+
     async fn update_players_and_chat(
         &mut self,
         chat_next_index: &mut usize,
-        players: &mut Vec<(usize, Player)>,
         chat_checked: &mut Instant,
         message_sent: &mut Instant,
     ) {
@@ -161,13 +302,13 @@ impl BonkRoom {
         let message_rate_limit = Duration::from_secs(3);
 
         if chat_checked.elapsed() >= chat_wait_time {
-            let _players = self
+            let players = self
                 .client
                 .execute("return window.bonkHost.players;", vec![])
                 .await;
-            if let Ok(_players) = _players {
-                if let Ok(_players) = from_value::<Vec<Option<Player>>>(_players) {
-                    *players = _players
+            if let Ok(players) = players {
+                if let Ok(players) = from_value::<Vec<Option<Player>>>(players) {
+                    self.player_data.players = players
                         .into_iter()
                         .enumerate()
                         .filter_map(|player| {
@@ -177,9 +318,9 @@ impl BonkRoom {
                                 return None;
                             }
                         })
-                        .collect();
+                        .collect::<Vec<(usize, Player)>>();
 
-                    for player in players.iter() {
+                    for player in self.player_data.players.iter() {
                         if let Ok(my_name) = dotenv::var("BONK_USERNAME") {
                             if player.1.name == my_name {
                                 continue;
@@ -245,6 +386,28 @@ impl BonkRoom {
                 }
             }
 
+            if let RoomState::DuringGame = self.state {
+                if self.state_changed.elapsed() > Duration::from_secs(10) {
+                    let finished = self
+                        .client
+                        .execute(
+                            "return document.getElementById('newbonklobby').style.opacity === '1';",
+                            vec![],
+                        )
+                        .await;
+
+                    if let Ok(finished) = finished {
+                        if let Ok(true) = from_value::<bool>(finished) {
+                            self.all_to_spec().await;
+                            self.chat_queue.push_back("gg".to_string());
+
+                            self.state = RoomState::Idle;
+                            self.state_changed = Instant::now();
+                        }
+                    }
+                }
+            }
+
             *chat_checked = Instant::now();
         }
 
@@ -287,7 +450,8 @@ impl BonkRoom {
                         .collect::<Vec<String>>()
                         .join(", "),
                 ),
-                "pick" | "p" => bonk_commands::pick(&command, &name, self),
+                "pick" | "p" => bonk_commands::pick(&command, &name, self).await,
+                "ready" | "r" => bonk_commands::ready(&name, self).await,
                 input => self.chat_queue.push_back(format!(
                     "Unknown command \"{}\". Run !help for a list of commands.",
                     input

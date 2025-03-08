@@ -7,6 +7,7 @@
 !ping: Pong!
 !queue: Checks the queue. Spots will be held for some time when players leave.
 !pick, !p <name>: When prompted, this command chooses and opponent to play against.
+!ready, !r: Indicaates that you're ready to play before a game.
 ```
 
 ## Discord Base Commands

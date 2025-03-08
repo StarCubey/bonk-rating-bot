@@ -1,32 +1,152 @@
-use std::ascii::AsciiExt;
+use serde_json::json;
+use tokio::time::Instant;
 
-use super::bonk_room::{BonkRoom, RoomState};
+use super::{
+    bonk_room::{BonkRoom, Player, RoomState},
+    room_maker::Mode,
+};
 
-pub fn pick(arguments: &Vec<&str>, name: &String, bonk_room: &mut BonkRoom) {
+pub async fn pick(arguments: &Vec<&str>, name: &String, bonk_room: &mut BonkRoom) {
+    let my_name = dotenv::var("BONK_USERNAME").unwrap_or("".to_string());
     let captain_name = &bonk_room.player_data.captain.1.name;
 
     if let RoomState::Idle | RoomState::DuringGame = bonk_room.state {
         bonk_room
             .chat_queue
             .push_back("You can't pick an opponent right now.".to_string());
+        return;
     }
     if *name != *captain_name {
         bonk_room
             .chat_queue
             .push_back(format!("It's {}'s turn to pick.", captain_name));
+        return;
     }
 
+    let keys: Vec<String> = bonk_room
+        .player_data
+        .players
+        .iter()
+        .map(|p| p.1.name.clone())
+        .filter(|p| p != captain_name && *p != my_name)
+        .collect();
     let pick_name = arguments.join(" ");
     if pick_name != "".to_string() {
+        let matches = fuzzy_finder(&pick_name, &keys);
+
+        if matches.len() == 0 {
+            bonk_room
+                .chat_queue
+                .push_back("No matches found. Please try again.".to_string());
+            return;
+        } else if matches.len() >= 2 {
+            bonk_room.chat_queue.push_back(format!(
+                "I couldn't find a match. \
+                Here are the matches I considered: {}. Please try again.",
+                matches.join(", ")
+            ));
+            return;
+        }
+        let default = &"".to_string();
+        let match_ = matches.get(0).unwrap_or(default);
+
+        let default = &(0, Player::new());
+        let match_ = bonk_room
+            .player_data
+            .players
+            .iter()
+            .find(|p| p.1.name == *match_)
+            .unwrap_or(default);
+
+        let mut team = 1;
+        if let Mode::Football = bonk_room.room_parameters.mode {
+            match bonk_room.player_data.team_flip {
+                false => team = 2,
+                true => team = 3,
+            }
+        }
+
         match bonk_room.player_data.pick_progress {
-            0 => {}
-            1..=2 => {}
-            _ => {}
+            0 => {
+                let _ = bonk_room
+                    .client
+                    .execute(
+                        "window\
+                        .bonkHost\
+                        .toolFunctions\
+                        .networkEngine\
+                        .changeOtherTeam(arguments[0], arguments[1]);",
+                        vec![json!(match_.0), json!(team)],
+                    )
+                    .await;
+
+                bonk_room.chat_queue.push_back(format!(
+                    "{} Has been selected! Type !r to start the game.",
+                    match_.1.name
+                ));
+
+                bonk_room.player_data.other_player = match_.clone();
+
+                bonk_room.player_data.pick_progress = 1;
+                bonk_room.state_changed = Instant::now();
+            }
+            1..=8 => {
+                let _ = bonk_room
+                    .client
+                    .execute(
+                        "window\
+                        .bonkHost\
+                        .toolFunctions\
+                        .networkEngine\
+                        .changeOtherTeam(arguments[0], arguments[1]);",
+                        vec![json!(bonk_room.player_data.other_player.0), json!(0)],
+                    )
+                    .await;
+
+                let _ = bonk_room
+                    .client
+                    .execute(
+                        "window\
+                        .bonkHost\
+                        .toolFunctions\
+                        .networkEngine\
+                        .changeOtherTeam(arguments[0], arguments[1]);",
+                        vec![json!(match_.0), json!(team)],
+                    )
+                    .await;
+
+                bonk_room.chat_queue.push_back(format!(
+                    "{} Has been selected! Type \"!r\" to start the game.",
+                    match_.1.name
+                ));
+
+                bonk_room.player_data.other_player = match_.clone();
+
+                bonk_room.player_data.pick_progress += 1;
+                bonk_room.state_changed = Instant::now();
+            }
+            _ => bonk_room.chat_queue.push_back(
+                "Allowed repicks have been exhausted. Type \"!r\" to start the game.".to_string(),
+            ),
         }
     } else {
         bonk_room.chat_queue.push_back(
             "Error: Player argument missing. Please specify a player to pick.".to_string(),
         );
+    }
+}
+
+pub async fn ready(name: &String, bonk_room: &mut BonkRoom) {
+    if let RoomState::Idle | RoomState::DuringGame = bonk_room.state {
+        return;
+    } else if bonk_room.player_data.pick_progress == 0 {
+        return;
+    } else {
+        if *name == bonk_room.player_data.captain.1.name {
+            bonk_room.player_data.captain.1.ready = true;
+        } else if *name == bonk_room.player_data.other_player.1.name {
+            bonk_room.player_data.other_player.1.ready = true;
+        }
     }
 }
 
