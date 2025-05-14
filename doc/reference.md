@@ -32,6 +32,7 @@ Here's a list of admin commands.
 
 Commands:
 admins <add/remove/list>: Edits the list of admins who have access to the "a" command.
+leaderboard, lb <create/remove>: Creates a leaderboard from a config file and a specified Discord channel.
 roomlog <get/set/clear>: Edits the room log channel where room links are posted.
 open, o: Creates a room from a room config file!
 closeall, ca: Closes all rooms.
@@ -55,6 +56,26 @@ rounds = 8
 # Optional
 
 headless = true
-password = "Super secret password"
+password = ""
 unlisted = true
+```
+
+## Leaderbaord Config Template
+
+The "/sgr a lb create" command takes a TOML config file as an argument.
+
+```toml
+name = "Classic 1v1"
+abbreviation = "c1"
+# "whr", "glicko"
+algorithm = "whr"
+mean_rating = 1500
+rating_scale = 173.72
+unrated_deviation = 350
+
+# Optional (depending on rating system)
+
+whr_w = 0.0215
+glicko_rp_days = 1
+glicko_c = 0.0467
 ```

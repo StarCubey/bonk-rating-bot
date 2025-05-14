@@ -101,6 +101,9 @@ pub async fn a(
                 args.remove(0);
                 match subcommand {
                     "admins" => admin_commands::admins(ctx, interaction, args).await?,
+                    "leaderboard" | "lb" => {
+                        admin_commands::leaderboard(ctx, interaction, args).await?
+                    }
                     "roomlog" => admin_commands::roomlog(ctx, interaction, args).await?,
                     "open" | "o" => admin_commands::open(ctx, interaction, args).await?,
                     "shutdown" | "sd" => admin_commands::shutdown(ctx, interaction, args).await?,

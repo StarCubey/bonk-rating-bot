@@ -16,6 +16,7 @@ pub async fn admin_help(
                 "Here's a list of admin commands.\n\n",
                 "__Commands:__\n",
                 "**admins <add/remove/list>:** Edits the list of admins who have access to the \"a\" command.\n",
+                "**leaderboard, lb <create/remove>:** Creates a leaderboard from a config file and a specified Discord channel.\n",
                 "**roomlog <get/set/clear>:** Edits the room log channel where room links are posted.\n",
                 "**open, o:** Creates a room from a room config file!\n",
                 "**closeall, ca:** Closes all rooms.\n",
@@ -135,6 +136,42 @@ pub async fn admins(
     Ok(())
 }
 
+pub async fn leaderboard(
+    ctx: &serenity::all::Context,
+    interaction: &CommandInteraction,
+    args: Vec<&str>,
+) -> Result<()> {
+    if help_check(
+        ctx,
+        interaction,
+        &args,
+        concat!("This command edits the list of leaderboards.",),
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    if let Some(&option) = args.get(0) {
+        match option {
+            "create" | "c" => {
+                //TODO
+
+                interaction
+                    .create_response(&ctx.http, response_message("hello"))
+                    .await?;
+            }
+            _ => {
+                return Err(anyhow!("Invalid argument."));
+            }
+        }
+    } else {
+        return Err(anyhow!("Missing argument for \"a leaderboard\" command."));
+    }
+
+    Ok(())
+}
+
 pub async fn roomlog(
     ctx: &serenity::all::Context,
     interaction: &CommandInteraction,
@@ -144,7 +181,7 @@ pub async fn roomlog(
         ctx,
         interaction,
         &args,
-        concat!("Edits the room log channel where room links are posted.",),
+        concat!("This command edits the room log channel where room links are posted.",),
     )
     .await?
     {
