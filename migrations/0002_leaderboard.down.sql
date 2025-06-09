@@ -1,0 +1,10 @@
+DROP TABLE players;
+DROP TABLE leaderboard;
+DROP TABLE lb_settings;
+DROP TABLE lb_seasons;
+DROP TABLE lb_players;
+DROP TABLE lb_players_whr;
+DROP TABLE lb_player_days_whr;
+DROP TABLE lb_games;
+DROP TABLE lb_game_teams;
+DROP TABLE lb_game_players;

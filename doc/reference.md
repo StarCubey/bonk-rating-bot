@@ -32,7 +32,7 @@ Here's a list of admin commands.
 
 Commands:
 admins <add/remove/list>: Edits the list of admins who have access to the "a" command.
-leaderboard, lb <create/remove>: Creates a leaderboard from a config file and a specified Discord channel.
+leaderboard, lb <create/remove/list>: Creates a leaderboard from a config file and a specified Discord channel.
 roomlog <get/set/clear>: Edits the room log channel where room links are posted.
 open, o: Creates a room from a room config file!
 closeall, ca: Closes all rooms.
@@ -69,13 +69,17 @@ name = "Classic 1v1"
 abbreviation = "c1"
 # "whr", "glicko"
 algorithm = "whr"
+# These mean rating and rating scale values are based on the elo scale.
 mean_rating = 1500
 rating_scale = 173.72
-unrated_deviation = 350
+# The deviation of a new player in the natural rating scale.
+# You can multiply it by the rating_scale to get the devaition.
+unrated_deviation = 2
+# deviation_per_day^2 is added to the players' deviation^2 (variance) every day.
+# Uses natural rating scale. Of course, exact implementation depends on algorithm.
+deviation_per_day = 0.045
 
 # Optional (depending on rating system)
 
-whr_w = 0.0215
 glicko_rp_days = 1
-glicko_c = 0.0467
 ```

@@ -1,9 +1,23 @@
 use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction};
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 
 use super::{edit_message, help_check, loading_message, response_message};
+
+#[derive(Deserialize, Serialize)]
+struct LeaderboardSettings {
+    name: String,
+    abbreviation: String,
+    algorithm: String,
+    mean_rating: f64,
+    rating_scale: f64,
+    unrated_deviation: f64,
+    deviation_per_day: f64,
+    glicko_rp_days: Option<i32>,
+}
 
 pub async fn admin_help(
     ctx: &serenity::all::Context,
@@ -16,7 +30,7 @@ pub async fn admin_help(
                 "Here's a list of admin commands.\n\n",
                 "__Commands:__\n",
                 "**admins <add/remove/list>:** Edits the list of admins who have access to the \"a\" command.\n",
-                "**leaderboard, lb <create/remove>:** Creates a leaderboard from a config file and a specified Discord channel.\n",
+                "**leaderboard, lb <create/remove/list>:** Creates a leaderboard from a config file and a specified Discord channel.\n",
                 "**roomlog <get/set/clear>:** Edits the room log channel where room links are posted.\n",
                 "**open, o:** Creates a room from a room config file!\n",
                 "**closeall, ca:** Closes all rooms.\n",
@@ -152,14 +166,93 @@ pub async fn leaderboard(
         return Ok(());
     }
 
+    let db = {
+        let data = ctx.data.read().await;
+        data.get::<crate::DatabaseKey>().cloned()
+    }
+    .ok_or(anyhow!("Failed to connect to database."))?;
+
     if let Some(&option) = args.get(0) {
         match option {
             "create" | "c" => {
-                //TODO
+                let attachment = &interaction
+                    .data
+                    .resolved
+                    .attachments
+                    .values()
+                    .next()
+                    .context("Attachment not found.")?;
+                let channel = &interaction
+                    .data
+                    .options
+                    .iter()
+                    .find(|o| o.name == "channel")
+                    .context("Channel not selected.")?
+                    .value;
+
+                let response = reqwest::get(&attachment.url).await?;
+                let file = response.text().await?;
+                let settings: LeaderboardSettings = toml::de::from_str(&file)?;
+                let settings_json = serde_json::to_value(&settings)?;
+
+                sqlx::query(
+                    "INSERT INTO leaderboard (name, abbreviation, settings) VALUES ($1, $2, $3)",
+                )
+                .bind(settings.name)
+                .bind(&settings.abbreviation)
+                .bind(settings_json)
+                .execute(db.db.as_ref())
+                .await?;
 
                 interaction
-                    .create_response(&ctx.http, response_message("hello"))
+                    .create_response(
+                        &ctx.http,
+                        response_message(format!("{} was created.", settings.abbreviation)),
+                    )
                     .await?;
+            }
+            "list" | "l" | "ls" => {
+                let list: Vec<(String, String)> =
+                    sqlx::query_as("SELECT name, abbreviation FROM leaderboard")
+                        .fetch_all(db.db.as_ref())
+                        .await?;
+
+                let list = list
+                    .iter()
+                    .map(|x| format!("{} ({})", x.0, x.1))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+
+                interaction
+                    .create_response(
+                        &ctx.http,
+                        response_message(format!("Leaderboards:\n\n{}", list)),
+                    )
+                    .await?;
+            }
+            "remove" | "r" | "rm" => {
+                if let Some(lb_abbr) = args.get(1) {
+                    sqlx::query("DELETE FROM leaderboard WHERE abbreviation = $1")
+                        .bind(lb_abbr)
+                        .execute(db.db.as_ref())
+                        .await?;
+
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(format!("Deleted {}.", lb_abbr)),
+                        )
+                        .await?;
+                } else {
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(
+                                "Missing argument for \"a leaderboard remove\" command.",
+                            ),
+                        )
+                        .await?;
+                }
             }
             _ => {
                 return Err(anyhow!("Invalid argument."));
