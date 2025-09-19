@@ -11,6 +11,8 @@ use tokio::{
     time::{self, Instant},
 };
 
+use crate::leaderboard::LeaderboardMessage;
+
 use super::bonk_commands;
 use super::room_maker::{Mode, RoomParameters};
 
@@ -22,6 +24,7 @@ pub enum BonkRoomMessage {
 pub struct BonkRoom {
     pub rx: mpsc::Receiver<BonkRoomMessage>,
     pub client: fantoccini::Client,
+    pub leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
     pub room_parameters: RoomParameters,
     pub state: RoomState,
     pub state_changed: Instant,
@@ -68,11 +71,13 @@ impl BonkRoom {
     pub fn new(
         rx: mpsc::Receiver<BonkRoomMessage>,
         client: fantoccini::Client,
+        leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
         room_parameters: RoomParameters,
     ) -> BonkRoom {
         BonkRoom {
             rx,
             client,
+            leaderboard_tx,
             room_parameters,
             state: RoomState::Idle,
             state_changed: Instant::now(),

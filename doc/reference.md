@@ -58,6 +58,8 @@ rounds = 8
 headless = true
 password = ""
 unlisted = true
+# Leaderboard abbreviation if a leaderboard is used for rated matches.
+leaderboard = ""
 ```
 
 ## Leaderbaord Config Template
@@ -67,8 +69,8 @@ The "/sgr a lb create" command takes a TOML config file as an argument.
 ```toml
 name = "Classic 1v1"
 abbreviation = "c1"
-# "whr", "glicko"
-algorithm = "whr"
+# Currently only one algorithm supported.
+algorithm = "OpenSkill"
 # These mean rating and rating scale values are based on the elo scale.
 mean_rating = 1500
 rating_scale = 173.72
@@ -78,8 +80,4 @@ unrated_deviation = 2
 # deviation_per_day^2 is added to the players' deviation^2 (variance) every day.
 # Uses natural rating scale. Of course, exact implementation depends on algorithm.
 deviation_per_day = 0.045
-
-# Optional (depending on rating system)
-
-glicko_rp_days = 1
 ```

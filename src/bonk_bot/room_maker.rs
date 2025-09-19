@@ -11,10 +11,13 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Instant};
 
+use crate::leaderboard::LeaderboardMessage;
+
 use super::bonk_room::{BonkRoom, BonkRoomMessage};
 
 pub struct RoomMakerMessage {
     pub bonkroom_tx: oneshot::Sender<Result<CreationReply>>,
+    pub leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
     pub room_parameters: RoomParameters,
 }
 
@@ -25,14 +28,15 @@ pub struct CreationReply {
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct RoomParameters {
-    pub headless: Option<bool>,
     pub name: String,
-    pub password: Option<String>,
     pub max_players: i32,
     pub min_level: i32,
-    pub unlisted: Option<bool>,
     pub mode: Mode,
     pub rounds: i32,
+    pub password: Option<String>,
+    pub headless: Option<bool>,
+    pub unlisted: Option<bool>,
+    pub leaderboard: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -78,7 +82,12 @@ impl RoomMaker {
                         match make_room(&c, &message.room_parameters).await {
                             Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
-                                let mut bonkroom = BonkRoom::new(rx, c, message.room_parameters);
+                                let mut bonkroom = BonkRoom::new(
+                                    rx,
+                                    c,
+                                    message.leaderboard_tx,
+                                    message.room_parameters,
+                                );
                                 tokio::spawn(async move {
                                     bonkroom.run().await;
                                 });

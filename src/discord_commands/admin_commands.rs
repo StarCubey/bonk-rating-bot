@@ -1,23 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction};
+use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction, CreateMessage};
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 
+use super::super::leaderboard::{LeaderboardSettings, RatingAlgorithm};
 use super::{edit_message, help_check, loading_message, response_message};
-
-#[derive(Deserialize, Serialize)]
-struct LeaderboardSettings {
-    name: String,
-    abbreviation: String,
-    algorithm: String,
-    mean_rating: f64,
-    rating_scale: f64,
-    unrated_deviation: f64,
-    deviation_per_day: f64,
-    glicko_rp_days: Option<i32>,
-}
 
 pub async fn admin_help(
     ctx: &serenity::all::Context,
@@ -188,19 +176,28 @@ pub async fn leaderboard(
                     .iter()
                     .find(|o| o.name == "channel")
                     .context("Channel not selected.")?
-                    .value;
+                    .value
+                    .as_channel_id()
+                    .context("Channel ID expected.")?;
 
                 let response = reqwest::get(&attachment.url).await?;
                 let file = response.text().await?;
                 let settings: LeaderboardSettings = toml::de::from_str(&file)?;
                 let settings_json = serde_json::to_value(&settings)?;
 
+                //TODO This will be the leaderboard message(s).
+                let message = channel
+                    .send_message(&ctx.http, CreateMessage::new().content("hi"))
+                    .await?;
+
                 sqlx::query(
-                    "INSERT INTO leaderboard (name, abbreviation, settings) VALUES ($1, $2, $3)",
+                    "INSERT INTO leaderboard (name, abbreviation, settings, channel, messages) VALUES ($1, $2, $3, $4, $5)",
                 )
                 .bind(settings.name)
                 .bind(&settings.abbreviation)
                 .bind(settings_json)
+                .bind(i64::from(*channel))
+                .bind(vec![i64::from(message.id)])
                 .execute(db.db.as_ref())
                 .await?;
 
@@ -291,7 +288,7 @@ pub async fn roomlog(
         match option {
             "get" | "g" => {
                 let channel: Vec<(i64,)> =
-                    sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                    sqlx::query_as("SELECT id FROM channegls WHERE type = 'room log'")
                         .fetch_all(db.db.as_ref())
                         .await?;
 
@@ -404,7 +401,7 @@ pub async fn open(
 
     let mut data = ctx.data.write().await;
     if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.open_room(room_parameters.clone()).await {
+        match bonk_bot.open_room(ctx, room_parameters.clone()).await {
             Ok(room_link) => {
                 interaction
                     .edit_response(

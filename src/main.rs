@@ -1,5 +1,6 @@
 mod bonk_bot;
 mod discord_commands;
+mod leaderboard;
 
 #[cfg(test)]
 mod tests;
