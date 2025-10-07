@@ -5,7 +5,7 @@ This project has multiple licenses:
 
 ---
 
-This project includes the following third-party dependencies in the `dependencies` folder along with their respective license files:
+This project includes the following third-party dependencies in the `dependencies` folder along with their respective licenses:
 
 - **Bonk Host.user.js**  
   - **Author**: Salama  
@@ -21,3 +21,6 @@ This project includes the following third-party dependencies in the `dependencie
   - **Author**: Excigma  
   - **License**: GPLv3  
   - **Source**: https://greasyfork.org/en/scripts/433861-code-injector-bonk-io
+
+ - **sgrAPI.user.js**
+  - **Author**: Salama, StarCubey (more information in the file itself)

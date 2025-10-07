@@ -1,10 +1,9 @@
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction, CreateMessage};
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 
-use super::super::leaderboard::{LeaderboardSettings, RatingAlgorithm};
+use super::super::leaderboard::LeaderboardSettings;
 use super::{edit_message, help_check, loading_message, response_message};
 
 pub async fn admin_help(
@@ -400,8 +399,14 @@ pub async fn open(
     let room_parameters: RoomParameters = toml::de::from_str(&file)?;
 
     let mut data = ctx.data.write().await;
+
+    let db = data
+        .get::<crate::DatabaseKey>()
+        .cloned()
+        .ok_or(anyhow!("Failed to connect to database."))?;
+
     if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.open_room(ctx, room_parameters.clone()).await {
+        match bonk_bot.open_room(db.db, room_parameters.clone()).await {
             Ok(room_link) => {
                 interaction
                     .edit_response(

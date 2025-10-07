@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::from_value;
 use serde_json::json;
+use tokio::sync::oneshot;
 use tokio::{
     sync::mpsc::{self, error::TryRecvError},
     time::{self, Instant},
@@ -265,8 +266,7 @@ impl BonkRoom {
                 let _ = self
                     .client
                     .execute(
-                        "window\
-                            .bonkHost\
+                        "sgrAPI\
                             .toolFunctions\
                             .networkEngine\
                             .changeOtherTeam(arguments[0], arguments[1]);",
@@ -281,8 +281,7 @@ impl BonkRoom {
                 let _ = self
                     .client
                     .execute(
-                        "window\
-                            .bonkHost\
+                        "sgrAPI\
                             .toolFunctions\
                             .networkEngine\
                             .changeOtherTeam(arguments[0], arguments[1]);",
@@ -318,8 +317,7 @@ impl BonkRoom {
                     let _ = self
                         .client
                         .execute(
-                            "window\
-                                .bonkHost\
+                            "sgrAPI\
                                 .toolFunctions\
                                 .networkEngine\
                                 .changeOtherTeam(arguments[0], arguments[1]);",
@@ -347,8 +345,7 @@ impl BonkRoom {
         let _ = self
             .client
             .execute(
-                "window\
-                    .bonkHost\
+                "sgrAPI\
                     .toolFunctions\
                     .networkEngine\
                     .kickPlayer(arguments[0]);",
@@ -370,13 +367,11 @@ impl BonkRoom {
         let _ = self
             .client
             .execute(
-                "window\
-                .bonkHost\
+                "sgrAPI\
                 .toolFunctions\
                 .networkEngine\
                 .changeOtherTeam(arguments[0], 0);\
-            window\
-                .bonkHost\
+            sgrAPI\
                 .toolFunctions\
                 .networkEngine\
                 .changeOtherTeam(arguments[1], 0);",
@@ -399,10 +394,7 @@ impl BonkRoom {
         let message_rate_limit = Duration::from_secs(3);
 
         if chat_checked.elapsed() >= chat_wait_time {
-            let players = self
-                .client
-                .execute("return window.bonkHost.players;", vec![])
-                .await;
+            let players = self.client.execute("return sgrAPI.players;", vec![]).await;
             if let Ok(players) = players {
                 if let Ok(players) = from_value::<Vec<Option<Player>>>(players) {
                     self.player_data.players = players
@@ -497,6 +489,49 @@ impl BonkRoom {
                         if let Ok(true) = from_value::<bool>(finished) {
                             self.all_to_spec().await;
                             self.chat_queue.push_back("gg".to_string());
+                            if let Some(leaderboard_tx) = &self.leaderboard_tx {
+                                if let Mode::Football = self.room_parameters.mode {
+                                    let blue_win = self.client.execute("return sgrAPI.footballState.scores[3] === arguments[0];", vec![json!(self.room_parameters.rounds)]).await;
+                                    if let Ok(blue_win) = blue_win {
+                                        if let Ok(blue_win) = from_value::<bool>(blue_win) {
+                                            let (match_string_tx, match_string_rx) =
+                                                oneshot::channel();
+                                            let captain = self.player_data.captain.1.name.clone();
+                                            let other_player =
+                                                self.player_data.other_player.1.name.clone();
+
+                                            _ = leaderboard_tx
+                                                .send(LeaderboardMessage::Update {
+                                                    teams: vec![
+                                                        vec![if blue_win
+                                                            ^ self.player_data.team_flip
+                                                        {
+                                                            captain.clone()
+                                                        } else {
+                                                            other_player.clone()
+                                                        }],
+                                                        vec![if blue_win
+                                                            ^ self.player_data.team_flip
+                                                        {
+                                                            other_player
+                                                        } else {
+                                                            captain
+                                                        }],
+                                                    ],
+                                                    ties: vec![false],
+                                                    match_str: match_string_tx,
+                                                })
+                                                .await;
+
+                                            if let Ok(Ok(match_string)) = match_string_rx.await {
+                                                self.chat_queue.push_back(match_string.1);
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    _ = leaderboard_tx.send(LeaderboardMessage::Ping).await;
+                                }
+                            }
 
                             self.state = RoomState::Idle;
                             self.state_changed = Instant::now();
@@ -513,7 +548,7 @@ impl BonkRoom {
                 let _ = self
                     .client
                     .execute(
-                        "window.bonkHost.toolFunctions.networkEngine.chatMessage(arguments[0]);",
+                        "sgrAPI.toolFunctions.networkEngine.chatMessage(arguments[0]);",
                         vec![json!(message)],
                     )
                     .await;

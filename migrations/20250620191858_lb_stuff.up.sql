@@ -1,13 +1,28 @@
 ALTER TABLE leaderboard
+    ALTER COLUMN id TYPE BIGINT,
     ADD COLUMN channel BIGINT NOT NULL,
     ADD COLUMN messages BIGINT[] NOT NULL;
+ALTER TABLE lb_games
+    ALTER COLUMN id TYPE BIGINT,
+    ALTER COLUMN lb_id TYPE BIGINT,
+    ADD COLUMN score DOUBLE PRECISION[],
+    ADD COLUMN ties BOOLEAN[];
 ALTER TABLE lb_players
+    ALTER COLUMN id TYPE BIGINT,
+    ALTER COLUMN lb_id TYPE BIGINT,
+    DROP COLUMN player_id,
+    ADD COLUMN name TEXT NOT NULL,
     ADD COLUMN display_rating DOUBLE PRECISION NOT NULL,
     ADD COLUMN last_updated DATE NOT NULL;
 ALTER TABLE lb_game_teams
-    ADD COLUMN player_ids INTEGER[] NOT NULL,
+    ALTER COLUMN game_id TYPE BIGINT,
+    DROP COLUMN score,
+    ADD COLUMN player_ids BIGINT[] NOT NULL,
     ADD COLUMN old_rating DOUBLE PRECISION[] NOT NULL,
     ADD COLUMN new_rating DOUBLE PRECISION[] NOT NULL;
+ALTER TABLE lb_seasons
+    ALTER COLUMN lb_id TYPE BIGINT;
+DROP TABLE players;
 
 DROP TABLE lb_players_whr;
 DROP TABLE lb_player_days_whr;

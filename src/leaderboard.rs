@@ -1,9 +1,15 @@
+mod openskill;
+
+use std::{f64, sync::Arc};
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tokio::{
-    select,
-    sync::{mpsc, oneshot},
+use sqlx::{
+    prelude::FromRow,
+    types::time::{Date, OffsetDateTime},
+    Pool, Postgres, Transaction,
 };
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Deserialize, Serialize)]
 pub struct LeaderboardSettings {
@@ -14,7 +20,7 @@ pub struct LeaderboardSettings {
     pub rating_scale: f64,
     pub unrated_deviation: f64,
     pub deviation_per_day: f64,
-    pub glicko_rp_days: Option<i32>,
+    pub cre: Option<f64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -22,28 +28,428 @@ pub enum RatingAlgorithm {
     OpenSkill,
 }
 
-pub enum LeaderboardMessage {}
+pub enum LeaderboardMessage {
+    Ping,
+    Update {
+        teams: Vec<Vec<String>>,
+        ties: Vec<bool>,
+        match_str: oneshot::Sender<Result<(String, String)>>,
+    },
+}
+
+#[derive(FromRow, Clone)]
+pub struct PlayerData {
+    pub id: i64,
+    pub name: String,
+    pub rating: f64,
+    pub display_rating: f64,
+    #[sqlx(skip)]
+    pub old_rating: f64,
+    pub rating_deviation: f64,
+    pub last_updated: Date,
+}
 
 ///Buffer 10, blocking send
 pub struct Leaderboard {
-    //Sending senders since BonkBot isn't allowed to hold on to an UpdateMessage sender.
     rx: mpsc::Receiver<LeaderboardMessage>,
-    settings: LeaderboardSettings,
+    pub db: Arc<Pool<Postgres>>,
+    pub settings: LeaderboardSettings,
+    id: i64,
+    season: i32,
 }
 
+const DISCORD_MARKDOWN: [char; 9] = ['\\', '*', '_', '~', '`', '>', ':', '#', '-'];
+
 impl Leaderboard {
-    pub fn new(
+    pub async fn new(
         rx: mpsc::Receiver<LeaderboardMessage>,
+        db: Arc<Pool<Postgres>>,
         settings: LeaderboardSettings,
-    ) -> Leaderboard {
-        Leaderboard { rx, settings }
+    ) -> Result<Leaderboard> {
+        let id: i64 = sqlx::query_scalar("SELECT id FROM leaderboard WHERE abbreviation = $1")
+            .bind(&settings.abbreviation)
+            .fetch_one(db.as_ref())
+            .await?;
+
+        let season_option: Option<i32> =
+            sqlx::query_scalar("SELECT MAX(season_num) from lb_seasons WHERE lb_id = $1")
+                .bind(id)
+                .fetch_one(db.as_ref())
+                .await?;
+
+        let season;
+        if let Some(_season) = season_option {
+            season = _season;
+        } else {
+            let today = OffsetDateTime::now_utc().date();
+            season = 0;
+            sqlx::query(
+                "INSERT INTO lb_seasons \
+                (lb_id, season_num, start, hard_reset) \
+                VALUES ($1, $2, $3, $4)",
+            )
+            .bind(id)
+            .bind(season)
+            .bind(today)
+            .bind(false)
+            .execute(db.as_ref())
+            .await?;
+        }
+
+        Ok(Leaderboard {
+            rx,
+            db,
+            settings,
+            id,
+            season,
+        })
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        while let Some(message) = self.rx.recv().await {
-            //TODO
+        match self.settings.algorithm {
+            RatingAlgorithm::OpenSkill => {
+                while let Some(message) = self.rx.recv().await {
+                    match message {
+                        LeaderboardMessage::Ping => println!("hi"),
+                        LeaderboardMessage::Update {
+                            teams,
+                            ties,
+                            match_str,
+                        } => _ = match_str.send(openskill::update(&self, teams, ties).await),
+                    }
+                }
+            }
         }
 
         Ok(())
+    }
+
+    pub async fn save_game(
+        &self,
+        trans: &mut Transaction<'static, Postgres>,
+        teams: &Vec<Vec<PlayerData>>,
+        day: Date,
+        score: Option<&Vec<f64>>,
+        ties: Option<&Vec<bool>>,
+    ) -> Result<()> {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO lb_games \
+            (lb_id, season_num, day, score, ties) \
+            VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        )
+        .bind(self.id)
+        .bind(self.season)
+        .bind(day)
+        .bind(score)
+        .bind(ties)
+        .fetch_one(&mut **trans)
+        .await?;
+
+        for (i, team) in teams.iter().enumerate() {
+            let player_ids: Vec<i64> = team.iter().map(|player| player.id).collect();
+            let old_rating: Vec<f64> = team.iter().map(|player| player.old_rating).collect();
+            let new_rating: Vec<f64> = team.iter().map(|player| player.display_rating).collect();
+
+            sqlx::query(
+                "INSERT INTO lb_game_teams \
+                (game_id, team, player_ids, old_rating, new_rating) \
+                VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(id)
+            .bind(i as i32)
+            .bind(player_ids)
+            .bind(old_rating)
+            .bind(new_rating)
+            .execute(&mut **trans)
+            .await?;
+        }
+
+        Ok(())
+    }
+}
+
+pub fn match_string(
+    teams: &Vec<Vec<PlayerData>>,
+    score: Option<&Vec<f64>>,
+    ties: Option<&Vec<bool>>,
+) -> (String, String) {
+    if teams.len() < 1 {
+        return (String::new(), String::new());
+    }
+
+    let ties_default = vec![false; teams.len() - 1];
+    let ties = ties.unwrap_or(&ties_default);
+    let no_teams = teams.iter().all(|players| players.len() == 1);
+
+    let mut game = String::new();
+    let summary;
+    if let Some(score) = score {
+        let mut score_teams: Vec<(&f64, Option<&Vec<PlayerData>>)> = score
+            .iter()
+            .enumerate()
+            .map(|(i, score)| (score, teams.get(i)))
+            .collect();
+        score_teams.sort_by(|a, b| b.0.partial_cmp(a.0).unwrap_or(std::cmp::Ordering::Greater));
+
+        summary = score_teams
+            .iter()
+            .map(|x| x.1)
+            .filter_map(|team| team)
+            .map(|team| {
+                team.iter()
+                    .map(|player| {
+                        format!(
+                            "{} ({:.0} 🡢 {:.0})",
+                            player.name, player.old_rating, player.display_rating
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            })
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        game += &score_teams
+            .iter()
+            .map(|x| x.0.to_string())
+            .collect::<Vec<String>>()
+            .join(" - ");
+        game += "\n";
+
+        if no_teams {
+            game += &score_teams
+                .iter()
+                .map(|x| x.1)
+                .filter_map(|team| team)
+                .map(|team| team.get(0))
+                .filter_map(|player| player)
+                .map(|player| {
+                    format!(
+                        "{} ({:.0} 🡢 {:.0})",
+                        escaped(&player.name),
+                        player.old_rating,
+                        player.display_rating
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join("\n");
+        } else {
+            game += "\n";
+            game += &score_teams
+                .iter()
+                .map(|x| x.1)
+                .filter_map(|team| team)
+                .map(|team| {
+                    team.iter()
+                        .map(|player| {
+                            format!(
+                                "{} ({:.0} 🡢 {:.0})",
+                                escaped(&player.name),
+                                player.old_rating,
+                                player.display_rating
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                })
+                .collect::<Vec<String>>()
+                .join("\n\n");
+        }
+    } else {
+        summary = teams
+            .iter()
+            .map(|team| {
+                team.iter()
+                    .map(|player| {
+                        format!(
+                            "{} ({:.0} 🡢 {:.0})",
+                            player.name, player.old_rating, player.display_rating
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            })
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let tie_teams: Vec<(&bool, &Vec<PlayerData>)> = teams
+            .iter()
+            .enumerate()
+            .map(|(i, team)| {
+                (
+                    if i < 1 {
+                        &false
+                    } else {
+                        ties.get(i - 1).unwrap_or(&false)
+                    },
+                    team,
+                )
+            })
+            .collect();
+
+        let mut last_placement = String::new();
+        if teams.len() == 2 {
+            if no_teams {
+                if let Some(true) = ties.get(0) {
+                    game += "Draw\n";
+                }
+
+                let winner = teams.get(0);
+                let loser = teams.get(1);
+
+                if let (Some(winner), Some(loser)) = (winner, loser) {
+                    if let (Some(winner), Some(loser)) = (winner.get(0), loser.get(0)) {
+                        if let Some(false) | None = ties.get(0) {
+                            game += "Winner: "
+                        }
+                        game += &format!(
+                            "{} ({:.0} 🡢 {:.0})\n",
+                            escaped(&winner.name),
+                            winner.old_rating,
+                            winner.rating
+                        );
+                        if let Some(false) | None = ties.get(0) {
+                            game += "Loser: "
+                        }
+                        game += &format!(
+                            "{} ({:.0} 🡢 {:.0})",
+                            escaped(&loser.name),
+                            loser.old_rating,
+                            loser.rating
+                        );
+                    }
+                }
+            } else {
+                if let Some(true) = ties.get(0) {
+                    game += "Draw\n\n";
+                }
+
+                let winners = teams.get(0);
+                let losers = teams.get(1);
+
+                if let (Some(winners), Some(losers)) = (winners, losers) {
+                    if let Some(false) | None = ties.get(0) {
+                        game += "Winner\n";
+                    }
+                    game += &winners
+                        .iter()
+                        .map(|player| {
+                            format!(
+                                "{} ({:.0} 🡢 {:.0})",
+                                escaped(&player.name),
+                                player.old_rating,
+                                player.display_rating
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                    game += "\n\n";
+
+                    if let Some(false) | None = ties.get(0) {
+                        game += "Loser\n";
+                    }
+                    game += &losers
+                        .iter()
+                        .map(|player| {
+                            format!(
+                                "{} ({:.0} 🡢 {:.0})",
+                                escaped(&player.name),
+                                player.old_rating,
+                                player.display_rating
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n");
+                }
+            }
+        } else {
+            if no_teams {
+                game += &tie_teams
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tie_team)| {
+                        if let Some(player) = tie_team.1.get(0) {
+                            let placement = if *tie_team.0 {
+                                last_placement.clone()
+                            } else {
+                                to_ordinal(i + 1)
+                            };
+                            last_placement = placement.clone();
+
+                            Some(format!(
+                                "{}: {} ({:.0} 🡢 {:.0})",
+                                placement,
+                                escaped(&player.name),
+                                player.old_rating,
+                                player.display_rating
+                            ))
+                        } else {
+                            return None;
+                        }
+                    })
+                    .filter_map(|str| str)
+                    .collect::<Vec<String>>()
+                    .join("\n");
+            } else {
+                game += &tie_teams
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tie_team)| {
+                        let placement = if *tie_team.0 {
+                            last_placement.clone()
+                        } else {
+                            to_ordinal(i + 1)
+                        };
+                        last_placement = placement.clone();
+
+                        placement
+                            + "\n"
+                            + &tie_team
+                                .1
+                                .iter()
+                                .map(|player| {
+                                    format!(
+                                        "{} ({:.0} 🡢 {:.0})",
+                                        escaped(&player.name),
+                                        player.old_rating,
+                                        player.display_rating
+                                    )
+                                })
+                                .collect::<Vec<String>>()
+                                .join("\n")
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n\n");
+            }
+        }
+    }
+
+    (game, summary)
+}
+
+fn escaped(str: &String) -> String {
+    str.chars()
+        .map(|c| {
+            if DISCORD_MARKDOWN.contains(&c) {
+                format!("\\{}", c)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("")
+}
+
+fn to_ordinal(num: usize) -> String {
+    let output = num.to_string();
+    if num % 100 == 11 || num % 100 == 12 || num % 100 == 13 {
+        return output + "th";
+    }
+
+    match num % 10 {
+        1 => output + "st",
+        2 => output + "nd",
+        3 => output + "rd",
+        _ => output + "th",
     }
 }

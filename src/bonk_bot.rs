@@ -2,8 +2,11 @@ pub mod bonk_commands;
 pub mod bonk_room;
 pub mod room_maker;
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Context, Result};
 use serenity::prelude::TypeMapKey;
+use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use self::bonk_room::BonkRoomMessage;
@@ -19,7 +22,7 @@ impl TypeMapKey for BonkBotKey {
 pub struct BonkBotValue {
     bonk_rooms: Mutex<Vec<mpsc::Sender<BonkRoomMessage>>>,
     roommaker_tx: mpsc::Sender<RoomMakerMessage>,
-    leaderboards_tx: Vec<(i32, mpsc::WeakSender<LeaderboardMessage>)>,
+    leaderboards_tx: Vec<(i64, mpsc::WeakSender<LeaderboardMessage>)>,
 }
 
 impl BonkBotValue {
@@ -39,22 +42,16 @@ impl BonkBotValue {
 
     pub async fn open_room(
         &mut self,
-        ctx: &serenity::all::Context,
+        db: Arc<Pool<Postgres>>,
         room_parameters: room_maker::RoomParameters,
     ) -> Result<String> {
-        let db = {
-            let data = ctx.data.read().await;
-            data.get::<crate::DatabaseKey>().cloned()
-        }
-        .ok_or(anyhow!("Failed to connect to database."))?;
-
         let mut leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>> = None;
 
         if let Some(lb) = &room_parameters.leaderboard {
-            let rows: Vec<(i32, serde_json::Value)> =
-                sqlx::query_as("SELECT (id, settings) FROM leaderboard WHERE abbreviation = ($1)")
+            let rows: Vec<(i64, serde_json::Value)> =
+                sqlx::query_as("SELECT id, settings FROM leaderboard WHERE abbreviation = $1")
                     .bind(lb)
-                    .fetch_all(db.db.as_ref())
+                    .fetch_all(db.as_ref())
                     .await?;
 
             if rows.len() < 1 {
@@ -76,22 +73,25 @@ impl BonkBotValue {
                 leaderboard_tx = leaderboard_wtx.clone().upgrade();
             } else {
                 let (tx, rx) = mpsc::channel(10);
-                let mut leaderboard = Leaderboard::new(rx, settings);
+                let mut leaderboard = Leaderboard::new(rx, db, settings).await?;
 
                 tokio::spawn(async move {
-                    leaderboard.run().await;
+                    let res = leaderboard.run().await;
+                    if let Result::Err(err) = res {
+                        println!("Leaderboard error: {}", err)
+                    }
                 });
 
-                leaderboard_tx = Some(tx);
                 self.leaderboards_tx.push((id, tx.clone().downgrade()));
+                leaderboard_tx = Some(tx);
             }
         }
 
-        //TODO RoomMakerMessage must be updated to accept an optional leaderboard_tx
         let (tx, rx) = oneshot::channel();
         self.roommaker_tx
             .send(RoomMakerMessage {
                 bonkroom_tx: tx,
+                leaderboard_tx,
                 room_parameters,
             })
             .await?;

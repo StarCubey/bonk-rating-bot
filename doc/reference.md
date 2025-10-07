@@ -71,13 +71,20 @@ name = "Classic 1v1"
 abbreviation = "c1"
 # Currently only one algorithm supported.
 algorithm = "OpenSkill"
-# These mean rating and rating scale values are based on the elo scale.
+# These mean rating and deviation scale values are based on the elo scale.
 mean_rating = 1500
-rating_scale = 173.72
-# The deviation of a new player in the natural rating scale.
-# You can multiply it by the rating_scale to get the devaition.
-unrated_deviation = 2
-# deviation_per_day^2 is added to the players' deviation^2 (variance) every day.
-# Uses natural rating scale. Of course, exact implementation depends on algorithm.
-deviation_per_day = 0.045
+# Rating scale is the deviation of the derivative of the
+# win probability function.
+rating_scale = 315.09
+# The deviation of a new player divided by the rating scale.
+unrated_deviation = 1.1108
+# deviation_per_day^2 * rating_scale^2 is added to the players' deviation^2 (variance) every day.
+# Exact implementation depends on algorithm.
+deviation_per_day = 0.037
+
+# Optional
+
+# Conservative rating estimate. The number of standard deviations to subtract from
+# the rating when calculating the displayed rating.
+cre = 0
 ```

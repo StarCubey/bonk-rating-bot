@@ -108,6 +108,7 @@ impl RoomMaker {
                         err = e;
                     }
                 };
+                println!("Failed to make room: {}", err);
                 if i >= 4 {
                     let _ = message.bonkroom_tx.send(Err(err));
                     break;
@@ -189,19 +190,13 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
         Mode::Classic => "b",
     };
 
+    let mut sgr_api_file = File::open("dependencies/sgrAPI.user.js").await?;
+    let mut sgr_api = String::new();
+    sgr_api_file.read_to_string(&mut sgr_api).await?;
+
     let mut injector_file = File::open("dependencies/Code Injector - Bonk.io.user.js").await?;
     let mut injector = String::new();
     injector_file.read_to_string(&mut injector).await?;
-
-    let mut bonk_host_file = File::open("dependencies/Bonk Host.user.js").await?;
-    let mut bonk_host = String::new();
-    bonk_host_file.read_to_string(&mut bonk_host).await?;
-
-    let mut bonk_playlists_file = File::open("dependencies/Bonk Playlists.user.js").await?;
-    let mut bonk_playlists = String::new();
-    bonk_playlists_file
-        .read_to_string(&mut bonk_playlists)
-        .await?;
 
     c.goto("https://bonk.io/").await?;
 
@@ -214,9 +209,8 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
         .enter_frame()
         .await?;
 
-    c.execute(&injector, Vec::new()).await?;
-    c.execute(&bonk_host, Vec::new()).await?;
-    c.execute(&bonk_playlists, Vec::new()).await?;
+    c.execute(&sgr_api, vec![]).await?;
+    c.execute(&injector, vec![]).await?;
 
     let account_button =
         wait_for_element(&c, Locator::Id("guestOrAccountContainer_accountButton")).await?;
@@ -339,9 +333,9 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
     .await?;
 
     c.execute(
-        "window.bonkHost.bonkSetMode(arguments[0]);\
-        window.bonkHost.toolFunctions.networkEngine.changeOwnTeam(0);\
-        window.bonkHost.toolFunctions.networkEngine.sendNoHostSwap();",
+        "sgrAPI.setMode(arguments[0]);\
+        sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
+        sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();",
         vec![json!(mode)],
     )
     .await?;

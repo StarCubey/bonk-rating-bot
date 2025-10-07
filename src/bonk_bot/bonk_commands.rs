@@ -94,8 +94,7 @@ pub async fn pick(arguments: &Vec<&str>, name: &String, bonk_room: &mut BonkRoom
                 let _ = bonk_room
                     .client
                     .execute(
-                        "window\
-                        .bonkHost\
+                        "sgrAPI\
                         .toolFunctions\
                         .networkEngine\
                         .changeOtherTeam(arguments[0], arguments[1]);",
@@ -106,8 +105,7 @@ pub async fn pick(arguments: &Vec<&str>, name: &String, bonk_room: &mut BonkRoom
                 let _ = bonk_room
                     .client
                     .execute(
-                        "window\
-                        .bonkHost\
+                        "sgrAPI\
                         .toolFunctions\
                         .networkEngine\
                         .changeOtherTeam(arguments[0], arguments[1]);",
