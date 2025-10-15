@@ -2,11 +2,8 @@ pub mod bonk_commands;
 pub mod bonk_room;
 pub mod room_maker;
 
-use std::sync::Arc;
-
 use anyhow::{anyhow, Context, Result};
 use serenity::prelude::TypeMapKey;
-use sqlx::{Pool, Postgres};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use self::bonk_room::BonkRoomMessage;
@@ -22,7 +19,7 @@ impl TypeMapKey for BonkBotKey {
 pub struct BonkBotValue {
     bonk_rooms: Mutex<Vec<mpsc::Sender<BonkRoomMessage>>>,
     roommaker_tx: mpsc::Sender<RoomMakerMessage>,
-    leaderboards_tx: Vec<(i64, mpsc::WeakSender<LeaderboardMessage>)>,
+    leaderboards_tx: Mutex<Vec<(i64, mpsc::WeakSender<LeaderboardMessage>)>>,
 }
 
 impl BonkBotValue {
@@ -36,16 +33,23 @@ impl BonkBotValue {
         BonkBotValue {
             bonk_rooms: Mutex::new(Vec::new()),
             roommaker_tx,
-            leaderboards_tx: Vec::new(),
+            leaderboards_tx: Mutex::new(Vec::new()),
         }
     }
 
     pub async fn open_room(
-        &mut self,
-        db: Arc<Pool<Postgres>>,
+        &self,
+        ctx: &serenity::all::Context,
         room_parameters: room_maker::RoomParameters,
     ) -> Result<String> {
         let mut leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>> = None;
+
+        let data = ctx.data.read().await;
+        let db = data
+            .get::<crate::DatabaseKey>()
+            .cloned()
+            .ok_or(anyhow!("Failed to connect to database."))?
+            .db;
 
         if let Some(lb) = &room_parameters.leaderboard {
             let rows: Vec<(i64, serde_json::Value)> =
@@ -66,14 +70,15 @@ impl BonkBotValue {
                     .clone(),
             )?;
 
-            self.leaderboards_tx.retain(|x| x.1.strong_count() > 0);
-            let leaderboard_wtx = self.leaderboards_tx.iter().find(|x| x.0 == id);
+            let mut leaderboards_tx = self.leaderboards_tx.lock().await;
+            leaderboards_tx.retain(|x| x.1.strong_count() > 0);
+            let leaderboard_wtx = leaderboards_tx.iter().find(|x| x.0 == id);
 
             if let Some((_, leaderboard_wtx)) = leaderboard_wtx {
                 leaderboard_tx = leaderboard_wtx.clone().upgrade();
             } else {
                 let (tx, rx) = mpsc::channel(10);
-                let mut leaderboard = Leaderboard::new(rx, db, settings).await?;
+                let mut leaderboard = Leaderboard::new(rx, ctx.clone(), settings).await?;
 
                 tokio::spawn(async move {
                     let res = leaderboard.run().await;
@@ -82,7 +87,7 @@ impl BonkBotValue {
                     }
                 });
 
-                self.leaderboards_tx.push((id, tx.clone().downgrade()));
+                leaderboards_tx.push((id, tx.clone().downgrade()));
                 leaderboard_tx = Some(tx);
             }
         }

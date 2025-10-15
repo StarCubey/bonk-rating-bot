@@ -488,7 +488,6 @@ impl BonkRoom {
                     if let Ok(finished) = finished {
                         if let Ok(true) = from_value::<bool>(finished) {
                             self.all_to_spec().await;
-                            self.chat_queue.push_back("gg".to_string());
                             if let Some(leaderboard_tx) = &self.leaderboard_tx {
                                 if let Mode::Football = self.room_parameters.mode {
                                     let blue_win = self.client.execute("return sgrAPI.footballState.scores[3] === arguments[0];", vec![json!(self.room_parameters.rounds)]).await;
@@ -524,12 +523,10 @@ impl BonkRoom {
                                                 .await;
 
                                             if let Ok(Ok(match_string)) = match_string_rx.await {
-                                                self.chat_queue.push_back(match_string.1);
+                                                self.chat_queue.push_back(match_string);
                                             }
                                         }
                                     }
-                                } else {
-                                    _ = leaderboard_tx.send(LeaderboardMessage::Ping).await;
                                 }
                             }
 

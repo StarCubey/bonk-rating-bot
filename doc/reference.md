@@ -33,6 +33,8 @@ Here's a list of admin commands.
 Commands:
 admins <add/remove/list>: Edits the list of admins who have access to the "a" command.
 leaderboard, lb <create/remove/list>: Creates a leaderboard from a config file and a specified Discord channel.
+leaderboard, lb edit <leaderboard abbreviation>: Modifies the leaderboard config file and channel. May break the leaderboard.
+leaderboard, lb match_channel <leaderboard abbreviation> <get/set/clear>: Sets the channel where matches are posted.
 roomlog <get/set/clear>: Edits the room log channel where room links are posted.
 open, o: Creates a room from a room config file!
 closeall, ca: Closes all rooms.

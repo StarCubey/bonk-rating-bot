@@ -3,45 +3,62 @@ use std::f64;
 use anyhow::Result;
 use sqlx::{types::time::OffsetDateTime, Postgres, Transaction};
 
-use crate::leaderboard::{self, Leaderboard};
+use crate::leaderboard::Leaderboard;
 
-use super::PlayerData;
+use super::{LeaderboardSettings, PlayerData};
 
-///Update ratings with Weng-Lin Bradley-Terry Plackett-Luce where the Plackette-Luce pairings are reversed.
+///Update ratings with Weng-Lin
 pub async fn update(
-    lb: &Leaderboard,
+    lb: &mut Leaderboard,
     teams: Vec<Vec<String>>,
     ties: Vec<bool>,
-) -> Result<(String, String)> {
+) -> Result<String> {
     let mut trans = lb.db.begin().await?;
-
-    let mut teams = teams;
-    //Placements reversed for reverse Plackett-Luce
-    teams.reverse();
 
     let mut teams_data = get_teams(lb, &mut trans, teams).await?;
 
     let today = OffsetDateTime::now_utc().date();
-    for team in &mut teams_data {
+
+    reverse_pl(&lb.settings, &ties, &mut teams_data);
+
+    apply_ratings(&mut trans, &teams_data).await?;
+    let match_string = lb
+        .save_game(&mut trans, &teams_data, today, None, Some(&ties))
+        .await?;
+
+    trans.commit().await?;
+
+    Ok(match_string)
+}
+
+///Rating update for Weng-Lin Bradley-Terry reverse Plackett-Luce (rankings and rating updates are reversed)
+pub fn reverse_pl(
+    settings: &LeaderboardSettings,
+    ties: &Vec<bool>,
+    teams_data: &mut Vec<Vec<PlayerData>>,
+) {
+    let today = OffsetDateTime::now_utc().date();
+    for team in &mut *teams_data {
         for player in team {
             if player.last_updated < today {
                 player.last_updated = today;
                 let day_num = today.to_julian_day() - player.last_updated.to_julian_day();
 
                 player.rating_deviation = (player.rating_deviation.powi(2)
-                    + (lb.settings.deviation_per_day * lb.settings.rating_scale).powi(2)
+                    + (settings.deviation_per_day * settings.rating_scale).powi(2)
                         * f64::from(day_num))
                 .sqrt();
             }
         }
     }
 
+    #[derive(Debug)]
     struct Rating {
         r: f64,
         v: f64,
     }
     let mut team_ratings: Vec<Rating> = Vec::new();
-    for team in &teams_data {
+    for team in &*teams_data {
         let mut team_rating = Rating { r: 0., v: 0. };
         for player in team {
             team_rating.r += player.rating;
@@ -52,7 +69,7 @@ pub async fn update(
     }
 
     let mut c_2 = 0.;
-    let beta_2 = lb.settings.rating_scale;
+    let beta_2 = settings.rating_scale.powi(2);
     for team in &team_ratings {
         c_2 += team.v + beta_2
     }
@@ -61,7 +78,7 @@ pub async fn update(
     //Count how many teams a team is tied with plus 1.
     let mut tie_nums: Vec<usize> = Vec::new();
     let mut i = 0;
-    while i < ties.len() + 1 {
+    while i < teams_data.len() {
         let mut count = 1usize;
         let mut j = i;
         while let Some(true) = ties.get(j) {
@@ -126,19 +143,10 @@ pub async fn update(
                     * (1. - player.rating_deviation.powi(2) / team.v * delta_v).max(0.0001))
                 .sqrt();
                 player.display_rating =
-                    player.rating - player.rating_deviation * lb.settings.cre.unwrap_or(0.);
-                player.last_updated = today;
+                    player.rating - player.rating_deviation * settings.cre.unwrap_or(0.);
             }
         }
     }
-
-    apply_ratings(&mut trans, &teams_data).await?;
-    lb.save_game(&mut trans, &teams_data, today, None, Some(&ties))
-        .await?;
-
-    trans.commit().await?;
-
-    Ok(leaderboard::match_string(&teams_data, None, Some(&ties)))
 }
 
 async fn get_teams(

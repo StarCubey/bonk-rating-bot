@@ -1,8 +1,8 @@
-use time::{Date, Month};
+use time::{Date, Month, OffsetDateTime};
 
 use crate::{
     bonk_bot::bonk_commands::fuzzy_finder,
-    leaderboard::{self, PlayerData},
+    leaderboard::{self, openskill, LeaderboardSettings, PlayerData},
 };
 
 #[test]
@@ -40,7 +40,43 @@ fn match_string() {
         vec![player2.clone(), player2],
         vec![player3.clone()],
     ];
-    let match_string = leaderboard::match_string(&teams, Some(vec![5., 1., 3.]), None);
+    let match_string = leaderboard::match_string(&teams, Some(&vec![5., 1., 3.]), None);
 
     println!("{}\n{}", match_string.0, match_string.1);
+}
+
+#[test]
+fn openskill() {
+    let today = OffsetDateTime::now_utc().date();
+
+    let settings = LeaderboardSettings {
+        name: "".to_string(),
+        abbreviation: "".to_string(),
+        algorithm: leaderboard::RatingAlgorithm::OpenSkill,
+        mean_rating: 5000.,
+        rating_scale: 1000.,
+        unrated_deviation: 2.,
+        deviation_per_day: 0.0523,
+        cre: Some(1.),
+    };
+
+    let player = PlayerData {
+        id: 0,
+        name: "StarCubey".to_string(),
+        rating: 5000.,
+        display_rating: 1500.,
+        old_rating: 5000.,
+        rating_deviation: 2000.,
+        last_updated: today,
+    };
+
+    let mut player2 = player.clone();
+    player2.name = "StarCubey2".to_string();
+    player2.rating = 6000.;
+
+    let mut teams_data = vec![vec![player.clone()], vec![player2.clone()]];
+
+    openskill::reverse_pl(&settings, &vec![true], &mut teams_data);
+
+    dbg!(teams_data);
 }

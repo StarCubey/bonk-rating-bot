@@ -1,15 +1,19 @@
-mod openskill;
+pub mod openskill;
 
-use std::{f64, sync::Arc};
+use std::{f64, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
+use serenity::all::ChannelId;
 use sqlx::{
     prelude::FromRow,
     types::time::{Date, OffsetDateTime},
     Pool, Postgres, Transaction,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::interval,
+};
 
 #[derive(Deserialize, Serialize)]
 pub struct LeaderboardSettings {
@@ -29,15 +33,14 @@ pub enum RatingAlgorithm {
 }
 
 pub enum LeaderboardMessage {
-    Ping,
     Update {
         teams: Vec<Vec<String>>,
         ties: Vec<bool>,
-        match_str: oneshot::Sender<Result<(String, String)>>,
+        match_str: oneshot::Sender<Result<String>>,
     },
 }
 
-#[derive(FromRow, Clone)]
+#[derive(FromRow, Clone, Debug)]
 pub struct PlayerData {
     pub id: i64,
     pub name: String,
@@ -52,86 +55,116 @@ pub struct PlayerData {
 ///Buffer 10, blocking send
 pub struct Leaderboard {
     rx: mpsc::Receiver<LeaderboardMessage>,
-    pub db: Arc<Pool<Postgres>>,
+    db: Arc<Pool<Postgres>>,
+    pub ctx: serenity::all::Context,
     pub settings: LeaderboardSettings,
     id: i64,
     season: i32,
+    needs_update: bool,
 }
 
 const DISCORD_MARKDOWN: [char; 9] = ['\\', '*', '_', '~', '`', '>', ':', '#', '-'];
+const DISCORD_CHARACTER_LIMIT: usize = 2000;
+const LEADERBOARD_DISPLAYED_PLACEMENTS: usize = 500;
 
 impl Leaderboard {
     pub async fn new(
         rx: mpsc::Receiver<LeaderboardMessage>,
-        db: Arc<Pool<Postgres>>,
+        ctx: serenity::all::Context,
         settings: LeaderboardSettings,
     ) -> Result<Leaderboard> {
-        let id: i64 = sqlx::query_scalar("SELECT id FROM leaderboard WHERE abbreviation = $1")
-            .bind(&settings.abbreviation)
-            .fetch_one(db.as_ref())
-            .await?;
+        let db;
+        let id: i64;
+        let season;
 
-        let season_option: Option<i32> =
-            sqlx::query_scalar("SELECT MAX(season_num) from lb_seasons WHERE lb_id = $1")
-                .bind(id)
+        {
+            let data = ctx.data.read().await;
+            db = data
+                .get::<crate::DatabaseKey>()
+                .cloned()
+                .ok_or(anyhow!("Failed to connect to database."))?
+                .db;
+
+            id = sqlx::query_scalar("SELECT id FROM leaderboard WHERE abbreviation = $1")
+                .bind(&settings.abbreviation)
                 .fetch_one(db.as_ref())
                 .await?;
 
-        let season;
-        if let Some(_season) = season_option {
-            season = _season;
-        } else {
-            let today = OffsetDateTime::now_utc().date();
-            season = 0;
-            sqlx::query(
-                "INSERT INTO lb_seasons \
+            let season_option: Option<i32> =
+                sqlx::query_scalar("SELECT MAX(season_num) from lb_seasons WHERE lb_id = $1")
+                    .bind(id)
+                    .fetch_one(db.as_ref())
+                    .await?;
+
+            if let Some(_season) = season_option {
+                season = _season;
+            } else {
+                let today = OffsetDateTime::now_utc().date();
+                season = 0;
+                sqlx::query(
+                    "INSERT INTO lb_seasons \
                 (lb_id, season_num, start, hard_reset) \
                 VALUES ($1, $2, $3, $4)",
-            )
-            .bind(id)
-            .bind(season)
-            .bind(today)
-            .bind(false)
-            .execute(db.as_ref())
-            .await?;
+                )
+                .bind(id)
+                .bind(season)
+                .bind(today)
+                .bind(false)
+                .execute(db.as_ref())
+                .await?;
+            }
         }
 
         Ok(Leaderboard {
             rx,
             db,
+            ctx,
             settings,
             id,
             season,
+            needs_update: false,
         })
     }
 
     pub async fn run(&mut self) -> Result<()> {
+        let mut update_timer = interval(Duration::from_secs(5 * 60));
+        update_timer.tick().await;
+        update_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         match self.settings.algorithm {
-            RatingAlgorithm::OpenSkill => {
-                while let Some(message) = self.rx.recv().await {
-                    match message {
-                        LeaderboardMessage::Ping => println!("hi"),
-                        LeaderboardMessage::Update {
-                            teams,
-                            ties,
-                            match_str,
-                        } => _ = match_str.send(openskill::update(&self, teams, ties).await),
-                    }
+            RatingAlgorithm::OpenSkill => loop {
+                tokio::select! {
+                    message = self.rx.recv() => {
+                        let _ = match message {
+                            Some(LeaderboardMessage::Update {
+                                teams,
+                                ties,
+                                match_str,
+                            }) => _ = match_str.send(openskill::update(self, teams, ties).await),
+                            None => break,
+                        };
+                    },
+                    _ = update_timer.tick() => {
+                        if self.needs_update {
+                            self.update_leaderboard().await?;
+                            self.needs_update = false;
+                        }
+                    },
                 }
-            }
+            },
         }
 
         Ok(())
     }
 
     pub async fn save_game(
-        &self,
+        &mut self,
         trans: &mut Transaction<'static, Postgres>,
         teams: &Vec<Vec<PlayerData>>,
         day: Date,
         score: Option<&Vec<f64>>,
         ties: Option<&Vec<bool>>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO lb_games \
             (lb_id, season_num, day, score, ties) \
@@ -163,6 +196,95 @@ impl Leaderboard {
             .execute(&mut **trans)
             .await?;
         }
+
+        let match_string = match_string(teams, score, ties);
+
+        let channel_id: Option<i64> =
+            sqlx::query_scalar("SELECT match_channel FROM leaderboard WHERE id = $1")
+                .bind(self.id)
+                .fetch_one(&mut **trans)
+                .await?;
+        if let Some(channel_id) = channel_id {
+            let channel_id = ChannelId::new(channel_id as u64);
+            channel_id.say(&self.ctx.http, match_string.0).await?;
+        }
+
+        self.needs_update = true;
+
+        Ok(match_string.1)
+    }
+
+    async fn update_leaderboard(&self) -> Result<()> {
+        let mut players: Vec<PlayerData> = sqlx::query_as("SELECT * from lb_players")
+            .fetch_all(self.db.as_ref())
+            .await?;
+
+        players.sort_by(|a, b| b.display_rating.total_cmp(&a.display_rating));
+
+        let mut lb_strings: Vec<String> = vec![self.settings.name.clone()];
+        for (i, player) in players.iter().enumerate() {
+            if i >= LEADERBOARD_DISPLAYED_PLACEMENTS {
+                break;
+            }
+
+            let lb_string = lb_strings
+                .last_mut()
+                .context("Failed to generate leaderboard string.")?;
+            let player_str = format!(
+                "\n{}. {} ({:.0}, σ = {:.2})",
+                i + 1,
+                player.name,
+                player.display_rating,
+                player.rating_deviation
+            );
+            if lb_string.encode_utf16().count() + player_str.encode_utf16().count()
+                > DISCORD_CHARACTER_LIMIT
+            {
+                lb_strings.push(player_str);
+            } else {
+                lb_string.push_str(&player_str);
+            }
+        }
+
+        let channel_id: i64 = sqlx::query_scalar("SELECT channel FROM leaderboard WHERE id = $1")
+            .bind(self.id)
+            .fetch_one(self.db.as_ref())
+            .await?;
+
+        let channel_id = ChannelId::new(channel_id as u64);
+
+        let messages: Vec<i64> =
+            sqlx::query_scalar("SELECT messages FROM leaderboard WHERE id = $1")
+                .bind(self.id)
+                .fetch_one(self.db.as_ref())
+                .await?;
+
+        let mut new_messages: Vec<i64> = vec![];
+        for (i, message_id) in messages.iter().enumerate() {
+            let message = channel_id.message(&self.ctx.http, *message_id as u64).await;
+
+            if let Ok(message) = message {
+                if let Some(lb_string) = lb_strings.get(i) {
+                    if i == new_messages.len() && message.content == *lb_string {
+                        lb_strings.remove(i); //panics
+                        new_messages.push(*message_id);
+                    } else {
+                        message.delete(&self.ctx.http).await?;
+                    }
+                } else {
+                    message.delete(&self.ctx.http).await?;
+                }
+            }
+        }
+
+        for lb_string in lb_strings {
+            new_messages.push(channel_id.say(&self.ctx.http, lb_string).await?.id.get() as i64);
+        }
+        sqlx::query("UPDATE leaderboard SET messages = $1 WHERE id = $2")
+            .bind(new_messages)
+            .bind(self.id)
+            .execute(self.db.as_ref())
+            .await?;
 
         Ok(())
     }

@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
-use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{sleep, Instant};
 
 use crate::leaderboard::LeaderboardMessage;
@@ -307,22 +307,31 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
     let link_button = wait_for_element(&c, Locator::Id("newbonklobby_linkbutton")).await?;
     retry(|| async { link_button.click().await }).await?;
 
-    let status_elements = c
-        .find_all(Locator::Css(".newbonklobby_chat_status"))
-        .await?;
-    let mut room_link = String::from("");
-    if status_elements.len() > 0 {
-        room_link = status_elements
-            .get(status_elements.len() - 1)
-            .context("Failed to parse room link.")?
-            .text()
+    let room_link: Mutex<String> = Mutex::new(String::from(""));
+    retry(|| async {
+        let status_elements = c
+            .find_all(Locator::Css(".newbonklobby_chat_status"))
             .await?;
-    }
-    room_link = room_link
-        .split(' ')
-        .last()
-        .context("Failed to parse room link.")?
-        .to_string();
+        let mut room_link = room_link.lock().await;
+        if status_elements.len() > 0 {
+            *room_link = status_elements
+                .get(status_elements.len() - 1)
+                .context("Failed to parse room link.")?
+                .text()
+                .await?;
+        }
+        *room_link = room_link
+            .split(' ')
+            .last()
+            .context("Failed to get room link.")?
+            .to_string();
+        if *room_link == "" {
+            return Err(anyhow!("Failed to get room link."));
+        }
+        Ok(())
+    })
+    .await?;
+    let room_link = (*room_link.lock().await).clone();
 
     let rounds_input = wait_for_element(&c, Locator::Id("newbonklobby_roundsinput")).await?;
     retry(|| async {
@@ -345,7 +354,7 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> 
         .click()
         .await?;
 
-    println!("Room created!");
+    println!("Room created: {}", room_link);
 
     //Game creation test.
     /*

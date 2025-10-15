@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction, CreateMessage};
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
+use crate::DatabaseValue;
 
 use super::super::leaderboard::LeaderboardSettings;
 use super::{edit_message, help_check, loading_message, response_message};
@@ -18,6 +19,8 @@ pub async fn admin_help(
                 "__Commands:__\n",
                 "**admins <add/remove/list>:** Edits the list of admins who have access to the \"a\" command.\n",
                 "**leaderboard, lb <create/remove/list>:** Creates a leaderboard from a config file and a specified Discord channel.\n",
+                "**leaderboard, lb edit <leaderboard abbreviation>:** Modifies the leaderboard config file and channel. May break the leaderboard.\n",
+                "**leaderboard, lb match_channel <get/set/clear> <leaderboard abbreviation>:** Sets the channel where matches are posted.\n",
                 "**roomlog <get/set/clear>:** Edits the room log channel where room links are posted.\n",
                 "**open, o:** Creates a room from a room config file!\n",
                 "**closeall, ca:** Closes all rooms.\n",
@@ -184,9 +187,8 @@ pub async fn leaderboard(
                 let settings: LeaderboardSettings = toml::de::from_str(&file)?;
                 let settings_json = serde_json::to_value(&settings)?;
 
-                //TODO This will be the leaderboard message(s).
                 let message = channel
-                    .send_message(&ctx.http, CreateMessage::new().content("hi"))
+                    .send_message(&ctx.http, CreateMessage::new().content(&settings.name))
                     .await?;
 
                 sqlx::query(
@@ -250,12 +252,174 @@ pub async fn leaderboard(
                         .await?;
                 }
             }
+            "edit" | "e" => {
+                if let Some(lb_abbr) = args.get(1) {
+                    let attachment = &interaction
+                        .data
+                        .resolved
+                        .attachments
+                        .values()
+                        .next()
+                        .context("Attachment not found.")?;
+                    let channel = &interaction
+                        .data
+                        .options
+                        .iter()
+                        .find(|o| o.name == "channel")
+                        .context("Channel not selected.")?
+                        .value
+                        .as_channel_id()
+                        .context("Channel ID expected.")?;
+
+                    let response = reqwest::get(&attachment.url).await?;
+                    let file = response.text().await?;
+                    let settings: LeaderboardSettings = toml::de::from_str(&file)?;
+                    let settings_json = serde_json::to_value(&settings)?;
+
+                    let lb_id: Option<i64> =
+                        sqlx::query_scalar("SELECT id FROM leaderboard WHERE abbreviation = $1")
+                            .bind(lb_abbr)
+                            .fetch_optional(db.db.as_ref())
+                            .await?;
+                    if lb_id.is_some() {
+                        sqlx::query(
+                            "UPDATE leaderboard SET name = $1, abbreviation = $2, settings = $3, channel = $4 WHERE abbreviation = $5",
+                        )
+                        .bind(settings.name)
+                        .bind(&settings.abbreviation)
+                        .bind(settings_json)
+                        .bind(i64::from(*channel))
+                        .bind(lb_abbr)
+                        .execute(db.db.as_ref())
+                        .await?;
+
+                        interaction
+                            .create_response(
+                                &ctx.http,
+                                response_message(format!("Updated {}", lb_abbr)),
+                            )
+                            .await?;
+                    } else {
+                        interaction
+                            .create_response(
+                                &ctx.http,
+                                response_message(format!("Failed to find \"{}\"", lb_abbr)),
+                            )
+                            .await?;
+                    }
+                } else {
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(
+                                "Missing argument for \"a leaderboard remove\" command.",
+                            ),
+                        )
+                        .await?;
+                }
+            }
+            "match_channel" | "mc" => {
+                let mut args = args.clone();
+                args.remove(0);
+                match_channel(ctx, db, interaction, args).await?;
+            }
             _ => {
                 return Err(anyhow!("Invalid argument."));
             }
         }
     } else {
         return Err(anyhow!("Missing argument for \"a leaderboard\" command."));
+    }
+
+    Ok(())
+}
+
+pub async fn match_channel(
+    ctx: &serenity::all::Context,
+    db: DatabaseValue,
+    interaction: &CommandInteraction,
+    args: Vec<&str>,
+) -> Result<()> {
+    if help_check(
+        ctx,
+        interaction,
+        &args,
+        concat!("This command edits a leaderboard's match channel.",),
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    if let Some(&option) = args.get(0) {
+        let abbreviation = *args.get(1).context("Missing leaderboard abbreviation.")?;
+
+        match option {
+            "get" | "g" => {
+                let channel: Option<i64> = sqlx::query_scalar(
+                    "SELECT match_channel FROM leaderboard WHERE abbreviation = $1",
+                )
+                .bind(abbreviation)
+                .fetch_one(db.db.as_ref())
+                .await?;
+                let channel = channel.context("This leaderboard doesn't have a match channel.")?;
+
+                interaction
+                    .create_response(
+                        &ctx.http,
+                        response_message(format!(
+                            "This leaderboard's match channel is <#{}>.",
+                            channel
+                        )),
+                    )
+                    .await?;
+            }
+            "set" | "s" => {
+                let channel = &interaction
+                    .data
+                    .options
+                    .iter()
+                    .find(|o| o.name == "channel")
+                    .context("Channel not selected.")?
+                    .value;
+
+                if let CommandDataOptionValue::Channel(channel) = channel {
+                    let channel = channel.get() as i64;
+                    sqlx::query(
+                        "UPDATE leaderboard SET match_channel = $1 WHERE abbreviation = $2",
+                    )
+                    .bind(channel)
+                    .bind(abbreviation)
+                    .execute(db.db.as_ref())
+                    .await?;
+
+                    interaction
+                        .create_response(
+                            &ctx.http,
+                            response_message(format!(
+                                "Match channel set to <#{}>.",
+                                channel as u64
+                            )),
+                        )
+                        .await?;
+                }
+            }
+            "clear" | "c" => {
+                sqlx::query("UPDATE leaderboard SET match_channel = NULL WHERE abbreviation = $1")
+                    .bind(abbreviation)
+                    .execute(db.db.as_ref())
+                    .await?;
+
+                interaction
+                    .create_response(&ctx.http, response_message("Match channel cleared."))
+                    .await?;
+            }
+            _ => return Err(anyhow!("Invalid argument.")),
+        }
+    } else {
+        return Err(anyhow!(
+            "Missing  get/set/clear argument from \"a leaderboard match_channel\" command."
+        ));
     }
 
     Ok(())
@@ -398,15 +562,10 @@ pub async fn open(
     let file = response.text().await?;
     let room_parameters: RoomParameters = toml::de::from_str(&file)?;
 
-    let mut data = ctx.data.write().await;
+    let data = ctx.data.read().await;
 
-    let db = data
-        .get::<crate::DatabaseKey>()
-        .cloned()
-        .ok_or(anyhow!("Failed to connect to database."))?;
-
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.open_room(db.db, room_parameters.clone()).await {
+    if let Some(bonk_bot) = data.get::<BonkBotKey>() {
+        match bonk_bot.open_room(ctx, room_parameters.clone()).await {
             Ok(room_link) => {
                 interaction
                     .edit_response(
@@ -428,7 +587,7 @@ pub async fn open(
                         channel
                             .say(
                                 &ctx.http,
-                                format!("Room opened:\n\n{}\n{}", room_parameters.name, room_link),
+                                format!("Room opened: {}\n{}", room_parameters.name, room_link),
                             )
                             .await?;
                     }
@@ -453,14 +612,7 @@ pub async fn closeall(
     interaction: &CommandInteraction,
     args: Vec<&str>,
 ) -> Result<()> {
-    if help_check(
-        ctx,
-        interaction,
-        &args,
-        "Shuts down the bot. This is the reccomended way to do it.",
-    )
-    .await?
-    {
+    if help_check(ctx, interaction, &args, "Closes all rooms.").await? {
         return Ok(());
     }
 
@@ -471,6 +623,20 @@ pub async fn closeall(
                 interaction
                     .create_response(&ctx.http, response_message("Rooms closed!"))
                     .await?;
+
+                let db = data.get::<crate::DatabaseKey>().cloned();
+
+                if let Some(db) = db {
+                    let channel: Vec<(i64,)> =
+                        sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                            .fetch_all(db.db.as_ref())
+                            .await?;
+
+                    if let Some(channel) = channel.get(0) {
+                        let channel = ChannelId::new(channel.0 as u64);
+                        channel.say(&ctx.http, "All rooms closed!").await?;
+                    }
+                }
             }
             Err(e) => {
                 interaction

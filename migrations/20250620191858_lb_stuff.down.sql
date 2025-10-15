@@ -6,7 +6,8 @@ CREATE TABLE players (
 ALTER TABLE leaderboard
     ALTER COLUMN id TYPE INTEGER,
     DROP COLUMN channel,
-    DROP COLUMN messages;
+    DROP COLUMN messages,
+    DROP COLUMN match_channel;
 ALTER TABLE lb_games
     ALTER COLUMN id TYPE INTEGER,
     ALTER COLUMN lb_id TYPE INTEGER,
