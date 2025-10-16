@@ -67,7 +67,7 @@ impl RoomMaker {
     pub async fn run(&mut self) {
         let room_rate_limit = Duration::from_secs(5);
 
-        while let Some(message) = self.rx.recv().await {
+        while let Some(mut message) = self.rx.recv().await {
             if let Some(last_room_time) = self.last_room_time {
                 if let Some(wait_time) = room_rate_limit.checked_sub(last_room_time.elapsed()) {
                     sleep(wait_time).await;
@@ -79,7 +79,7 @@ impl RoomMaker {
                 let err;
                 match make_client(message.room_parameters.headless.unwrap_or(true)).await {
                     Ok(c) => {
-                        match make_room(&c, &message.room_parameters).await {
+                        match make_room(&c, &mut message.room_parameters).await {
                             Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
                                 let mut bonkroom = BonkRoom::new(
@@ -109,7 +109,7 @@ impl RoomMaker {
                     }
                 };
                 println!("Failed to make room: {}", err);
-                if i >= 4 {
+                if i >= 9 {
                     let _ = message.bonkroom_tx.send(Err(err));
                     break;
                 }
@@ -166,12 +166,16 @@ async fn make_client(headless: bool) -> Result<fantoccini::Client> {
 }
 
 ///Returns room link.
-async fn make_room(c: &fantoccini::Client, room_parameters: &RoomParameters) -> Result<String> {
+async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters) -> Result<String> {
     let credentials = vec![json!({
         "username": dotenv::var("BONK_USERNAME")?,
         "password": dotenv::var("BONK_PASSWORD")?,
     })];
 
+    //Force no guests for leaderboard rooms.
+    if room_parameters.leaderboard.is_some() && room_parameters.min_level < 1 {
+        room_parameters.min_level = 1;
+    }
     let room_info = vec![json!({
         "roomName": room_parameters.name,
         "roomPass": room_parameters.password.clone().unwrap_or(String::from("")),
