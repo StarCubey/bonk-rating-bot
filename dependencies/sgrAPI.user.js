@@ -282,14 +282,22 @@ window.sgrAPI.setToken = t => {
 	token = t;
 };
 
-document.getElementById("newbonklobby_roundsinput").addEventListener("focus", e => {
-	e.target.value = "";
-});
-document.getElementById("newbonklobby_roundsinput").addEventListener("blur", e => {
-	if(e.target.value == "") {
-		e.target.value = window.bonkHost.toolFunctions.getGameSettings().wl;
-	}
-});
+let onRoundsExists = () => {
+  let roundsInput = document.getElementById("newbonklobby_roundsinput");
+  if(roundsInput !== null) {
+    roundsInput.addEventListener("focus", e => {
+    	e.target.value = "";
+    });
+    roundsInput.addEventListener("blur", e => {
+    	if(e.target.value == "") {
+    		e.target.value = window.bonkHost.toolFunctions.getGameSettings().wl;
+    	}
+    });
+  } else {
+    setTimeout(() => onRoundsExists(), 250);
+  }
+}
+onRoundsExists();
 
 window.sgrAPI.originalSend = window.WebSocket.prototype.send;
 window.WebSocket.prototype.send = function(args) {

@@ -348,15 +348,19 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
     c.execute(
         "sgrAPI.setMode(arguments[0]);\
         sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
-        sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();",
+        sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
+        sgrAPI.toolFunctions.networkEngine.doTeamLock(true);",
         vec![json!(mode)],
     )
     .await?;
 
+    //Somewhat unreliable.
+    /*
     c.find(Locator::Id("newbonklobby_teamlockbutton"))
         .await?
         .click()
         .await?;
+    */
 
     println!("Room created: {}", room_link);
 

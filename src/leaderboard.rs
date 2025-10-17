@@ -428,7 +428,7 @@ pub fn match_string(
                             "{} ({:.0} 🡢 {:.0})\n",
                             escaped(&winner.name),
                             winner.old_rating,
-                            winner.rating
+                            winner.display_rating
                         );
                         if let Some(false) | None = ties.get(0) {
                             game += "Loser: "
@@ -437,7 +437,7 @@ pub fn match_string(
                             "{} ({:.0} 🡢 {:.0})",
                             escaped(&loser.name),
                             loser.old_rating,
-                            loser.rating
+                            loser.display_rating
                         );
                     }
                 }
