@@ -680,5 +680,18 @@ pub async fn shutdown(
         .create_response(&ctx.http, response_message("Goodbye!"))
         .await?;
 
+    let db = data.get::<crate::DatabaseKey>().cloned();
+
+    if let Some(db) = db {
+        let channel: Result<i64, sqlx::Error> =
+            sqlx::query_scalar("SELECT id FROM channels WHERE type = 'room log'")
+                .fetch_one(db.db.as_ref())
+                .await;
+        if let Ok(channel) = channel {
+            let channel = ChannelId::new(channel as u64);
+            let _ = channel.say(&ctx.http, "Shutting down...").await;
+        }
+    }
+
     std::process::exit(0);
 }

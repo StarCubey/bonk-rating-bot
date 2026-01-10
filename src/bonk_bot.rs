@@ -1,5 +1,7 @@
+//pub mod bonk_commands;
 pub mod bonk_commands;
 pub mod bonk_room;
+pub mod events;
 pub mod room_maker;
 
 use anyhow::{anyhow, Context, Result};

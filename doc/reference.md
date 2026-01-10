@@ -12,7 +12,7 @@
 
 ## Discord Base Commands
 
-All commands start with /sgr with the command written in the command field.
+All commands start with /elo with the command written in the command field.
 
 ```
 A single slash command for all of your sgrBot needs!
@@ -25,7 +25,7 @@ a: Runs an admin command.
 
 ## Discord Admin Commands
 
-All commands are prefixed with /sgr a. Commands that target specific users, channels, or config files will use those optional arguments from the /sgr command.
+All commands are prefixed with /elo a. Commands that target specific users, channels, or config files will use those optional arguments from the /elo command.
 
 ```
 Here's a list of admin commands.
@@ -43,7 +43,7 @@ shutdown, sd: Shuts down the bot. This is the reccomended way to do it.
 
 ## Room Config Template
 
-The "/sgr a open" command takes a TOML config file as an argument. Below is an example config file.
+The "/elo a open" command takes a TOML config file as an argument. Below is an example config file.
 
 ```toml
 # Required
@@ -53,10 +53,41 @@ max_players = 8
 min_level = 1
 # "Football", "Simple", "DeathArrows", "Arrows", "Grapple", "VTOL", "Classic"
 mode = "Classic"
-rounds = 8
+# "Singles", "Teams", "FFA"
+queue = "Singles"
+rounds = 5
+# List of maps from raw map data. You can get maps from your favorites with sgrAPI.getFav(0);.
+maps = [
+"""
+{
+  "id": 123,
+  "name": "Simple 1v1",
+  "authorname": "GudStrat",
+  "leveldata": "ILDuJAhZIawhiQEVgGkCqAmANgFwGMBxADxwEkARAMSwFlVyAlAZgDVYMWmBPATQAaqGAEsArhACiAVlTRgACwASAEwDqTACoqlAKQUqkwAKahJCAMIgAHCgTngGSKGGJklV0a-efSByAA5NjVpMT41AEYcAC0LSE0AQyJqUGiBAHoAN3Sc3JyodIB2PLyWLJLc4CIAWwA2FQBzIzkCcDo6AT4ScmpIAGdBJmqAIxZdPF9J7wAFAGofbO90gAYALzp1zbpwKd29-YPJh2RJaBP5f2ALUGp4JEpgAHlPQ69Ic+BPNk1iahZh2CQaJeUCUO6vHxOT6XahcSAGLAAFkQQA",
+  "publisheddate": "2020-05-05 16:59:52",
+  "vu": 72147,
+  "vd": 14943,
+  "remixname": "",
+  "remixauthor": "",
+  "remixdb": 1,
+  "remixid": 0
+}
+""",
+]
 
-# Optional
+# Optional (defaults shown)
 
+strike_num = 2
+team_size = 2
+team_num = 2
+ffa_min = 2
+ffa_max = 7
+# Timers are in seconds
+idle_time = 5
+pick_time = 60
+ready_time = 60
+strike_time = 20
+game_time = 600
 headless = true
 password = ""
 unlisted = true
@@ -84,7 +115,7 @@ unrated_deviation = 1.1108
 # Exact implementation depends on algorithm.
 deviation_per_day = 0.037
 
-# Optional
+# Optional (defaults shown)
 
 # Conservative rating estimate. The number of standard deviations to subtract from
 # the rating when calculating the displayed rating.

@@ -40,17 +40,17 @@ impl EventHandler for Handler {
         //     dbg!(commands);
         // }
         // let res =
-        //     Command::delete_global_command(&ctx.http, CommandId::new(/*id*/)).await;
+        //     Command::delete_global_command(&ctx.http, CommandId::new(1333984123358023771)).await;
         // if let Err(res) = res {
         //     println!("{:?}", res);
         // }
 
-        let activity = ActivityData::playing("bonk.io /sgr help");
+        let activity = ActivityData::playing("bonk.io");
         ctx.set_activity(Some(activity));
 
         if let Err(e) = Command::create_global_command(
             &ctx.http,
-            CreateCommand::new("sgr")
+            CreateCommand::new("elo")
                 .description("A command prefix")
                 .add_option(
                     CreateCommandOption::new(
@@ -103,7 +103,7 @@ impl EventHandler for Handler {
     async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {
         if let Interaction::Command(command) = interaction {
             let res: Result<()> = async {
-                if command.data.name == "sgr" {
+                if command.data.name == "elo" {
                     let args = &command.data.options;
 
                     if args.len() < 1 {

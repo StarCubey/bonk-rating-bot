@@ -31,7 +31,7 @@ Go to "OAuth2" and copy the client id. Then, paste this URL in your browser with
 
 Go to "Bot" and generate a token which will need to be stored in the DISCORD_TOKEN environment variable.
 
-Then, you need to set the BOT_OWNER environment variable to your user id to ensure that you have bot admin permissions. You can get your user id by going to User Settings > Advanced under the App Settings heading and enabling Developer Mode. Then you can press Copy User ID from your profile.
+Then, you need to set the DISCORD_USER_ID environment variable to your user id to ensure that you have bot admin permissions. You can get your user id by going to User Settings > Advanced under the App Settings heading and enabling Developer Mode. Then you can press Copy User ID from your profile.
 
 ## PostgreSQL
 

@@ -96,41 +96,74 @@ pub fn reverse_pl(
     let mut exp_rs = Vec::new();
     let mut c_qs = Vec::new();
     let mut last_c_q = 0f64;
-    for team in &team_ratings {
-        //Ratings are divided by the deviation of a logistic distribution when calculating win probability.
-        //Ratings are negative in order to calculate the probability of losing
-        //instead of the probability of winning for reverse Plackett-Luce.
-        let exp_r = (-team.r / c * f64::consts::PI / 3f64.sqrt()).exp();
-        let c_q = last_c_q + exp_r;
+    let mut i = 0;
+    while i < team_ratings.len() {
+        let Some(tie_num) = tie_nums.get(i) else {
+            break;
+        };
+        let mut tie_group = vec![];
+        for _ in 0..*tie_num {
+            let Some(team) = team_ratings.get(i) else {
+                continue;
+            };
+            //Ratings are divided by the deviation of a logistic distribution when calculating win probability.
+            //Ratings are negative in order to calculate the probability of losing
+            //instead of the probability of winning for reverse Plackett-Luce.
+            let exp_r = (-team.r / c * f64::consts::PI / 3f64.sqrt()).exp();
+            tie_group.push(exp_r);
 
-        exp_rs.push(exp_r);
-        c_qs.push(c_q);
-        last_c_q = c_q;
+            last_c_q += exp_r;
+        }
+        c_qs.push(last_c_q);
+        exp_rs.push(tie_group);
+
+        i += tie_num;
     }
 
     let mut delta_rs = Vec::new();
     let mut delta_vs = Vec::new();
-    for (i, exp_r) in exp_rs.iter().enumerate() {
-        let mut delta_r = 0.;
-        let mut delta_v = 0.;
+    //Index of team
+    let mut i = 0;
+    for (tie_idx, tie_group) in exp_rs.iter().enumerate() {
+        for exp_r in tie_group {
+            let mut delta_r = 0.;
+            let mut delta_v = 0.;
 
-        if let Some(team) = team_ratings.get(i) {
-            for j in i..c_qs.len() {
-                if let (Some(c_q), Some(tie_num)) = (c_qs.get(j), tie_nums.get(j)) {
-                    let p = exp_r / c_q;
+            let Some(team) = team_ratings.get(i) else {
+                continue;
+            };
 
-                    if i == j {
-                        delta_r += (1. - p) * team.v / c / *tie_num as f64;
-                    } else {
-                        delta_r += -p * team.v / c / *tie_num as f64;
-                    }
-                    delta_v += p * (1. - p) * team.v.powf(1.5) / c.powi(3) / *tie_num as f64;
+            //Index of opposing teams grouped by ties
+            let mut j = tie_idx;
+            while j < exp_rs.len() {
+                let Some(tie_group) = exp_rs.get(j) else {
+                    continue;
+                };
+                let Some(c_q) = c_qs.get(j) else { continue };
+
+                //p is 1 if exp_r == c_q which has no effect on
+                //ratings assuming tie_idx == j and tie_group.len() == 1.
+                let p = exp_r / c_q;
+                //Update for win/loss
+                if j == tie_idx {
+                    delta_r += (1. - p) * team.v / c / tie_group.len() as f64;
+                } else {
+                    delta_r += -p * team.v / c / tie_group.len() as f64;
                 }
-            }
-        }
+                //Additional losses for ties
+                for _ in 1..tie_group.len() {
+                    delta_r += -p * team.v / c / tie_group.len() as f64;
+                }
 
-        delta_rs.push(delta_r);
-        delta_vs.push(delta_v);
+                delta_v += p * (1. - p) * team.v.powf(1.5) / c.powi(3);
+
+                j += 1;
+            }
+
+            delta_rs.push(delta_r);
+            delta_vs.push(delta_v);
+            i += 1;
+        }
     }
     for (i, team) in team_ratings.iter().enumerate() {
         if let (Some(players), Some(delta_r), Some(delta_v)) =

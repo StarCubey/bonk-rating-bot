@@ -69,7 +69,7 @@ sendStartCountdown(num) - Sends "Game starting in num"
 window.sgrAPI.state and sgrBotAPI.footballState
 The state values have useful information like score and player position.
 
-window.sgrAPI.state.score and window.sgrBotAPI.footballState.score
+window.sgrAPI.state.scores and window.sgrAPI.footballState.scores
 For team games, the score array will have 4 numbers corresponding to different team colors.
 For non-team games, the score array will be similar to the player array where scores[playerId] gives you the score of that player.
 
@@ -136,7 +136,7 @@ window.sgrAPI.getFav = async offset => {
   let response;
 
   await $.post("https://bonk2.io/scripts/map_getfave.php", {
-    token: token,
+    token: sgrAPI.token,
     startingfrom: offset * 32
     }).done(e => {
 
@@ -150,7 +150,7 @@ window.sgrAPI.getFav = async offset => {
 // Favorites a map.
 window.sgrAPI.fav = async id => {
   await $.post("https://bonk2.io/scripts/map_fave.php", {
-	  token: token,
+	  token: sgrAPI.token,
 		mapid: id,
 		action: "f"
 		}).fail(e => {
@@ -176,16 +176,117 @@ window.sgrAPI.keyUp = keyCode => {
 };
 
 // This function is called every game tick.
-window.sgrAPI.onTick = () => {}
+window.sgrAPI.onTick = () => {};
+
+// This function returns an input object specifying the player's inputs. The input parameter contains whatever the inputs normally are.
+// Example of input object: { left: false, right: false, up: false, down: false, action: false, action2: false }
+window.sgrAPI.onInput = input => input;
 
 // This function is called every time a websocket message is received.
+// Returns true or false. Return false if you want to ignore default behavior.
 // More information here: https://github.com/UnmatchedBracket/DemystifyBonk/blob/main/Packets.md
 // message is a string. For instance, chat messages always follow the format of 42[20,playerId,"message"].
-window.sgrAPI.onReceive = message => {}
+window.sgrAPI.onReceive = message => true;
+
+window.sgrAPI.onSend = message => true;
 
 window.sgrAPI.send = message => {
   window.sgrAPI.socket.send(message);
 };
+
+//This function can be overwritten to spoof or get data from post requests.
+window.sgrAPI.onPost = (url, input) => sgrAPI.oldPost(url, input).then((output, status) => {
+  return output;
+});
+
+//This function is used with onPost for wrapping post responses in JQuery promises.
+window.sgrAPI.postResponse = value => {
+  const deferred = $.Deferred();
+  deferred.resolve(value, 'success', { status: 200 });
+  return deferred.promise();
+}
+
+//onPost example. Changes username on login. Fake username is only visible for you.
+/*
+sgrAPI.onPost = (url, input) => sgrAPI.oldPost(url, input).then((output, status) => {
+  if(url.endsWith("login_auto.php") || url.endsWith("login_legacy.php")) {
+    output.username = "Fake username";
+  }
+
+  return output;
+});
+*/
+
+//Example of sending spoofed data for a post response without retrieving data from bonk servers.
+/*
+sgrAPI.onPost = (url, input) => {
+  if(url.endsWith("map_getfave.php")) {
+      return postResponse({
+        maps: [{
+          "id": 123,
+          "name": "Simple 1v1",
+          "authorname": "GudStrat",
+          "leveldata": "ILDuJAhZIawhiQEVgGkCqAmANgFwGMBxADxwEkARAMSwFlVyAlAZgDVYMWmBPATQAaqGAEsArhACiAVlTRgACwASAEwDqTACoqlAKQUqkwAKahJCAMIgAHCgTngGSKGGJklV0a-efSByAA5NjVpMT41AEYcAC0LSE0AQyJqUGiBAHoAN3Sc3JyodIB2PLyWLJLc4CIAWwA2FQBzIzkCcDo6AT4ScmpIAGdBJmqAIxZdPF9J7wAFAGofbO90gAYALzp1zbpwKd29-YPJh2RJaBP5f2ALUGp4JEpgAHlPQ69Ic+BPNk1iahZh2CQaJeUCUO6vHxOT6XahcSAGLAAFkQQA",
+          "publisheddate": "2020-05-05 16:59:52",
+          "vu": 71626,
+          "vd": 14821,
+          "remixname": "",
+          "remixauthor": "",
+          "remixdb": 1,
+          "remixid": 0,
+        }],
+        more: false,
+        r: "success",
+      });
+  };
+};
+*/
+
+// Joins room with a blank skin without updating UI or game state.
+window.sgrAPI.shadowJoinRoom = async url => {
+  let match = url.match(/\/(\d+)([a-z]*)$/);
+  let id = match[1];
+  const bypass = match[2];
+
+  let address;
+  let server;
+  await $.post("https://bonk2.io/scripts/autojoin.php", {
+    joinID: id
+    }).done(e => {
+
+    if (e.r != "success") console.log("Failed to get room from ID.");
+    else {
+      address = e.address;
+      server = e.server;
+    }
+  });
+
+  let response = await window.fetch(`https://${server}.bonk.io/socket.io/?EIO=3&transport=polling&t=${Date.now()}`);
+  sid = (await response.text()).match(/"sid"\s*:\s*"([^"]+)"/)[1];
+
+  //Query string parameters swapped to protect from spoofing.
+  let socket = new window.WebSocket(`wss://${server}.bonk.io/socket.io/?transport=websocket&sid=${sid}&EIO=3`);
+  socket.noSpoof = true;
+
+  socket.addEventListener("open", () => {
+    socket.send("5");
+
+    let data = {
+      joinID: address,
+      roomPassword: "",
+      guest: false,
+      dbid: 2,
+      version: 49,
+      peerID: Math.random().toString(36).substr(2, 10) + "v00000",
+      bypass: bypass,
+      token: sgrAPI.token,
+      avatar: {layers: [], bc: 0}
+    };
+    socket.send(`42[13,${JSON.stringify(data)}]`);
+  });
+
+  return socket;
+}
 
 if(!window.bonkCodeInjectors) window.bonkCodeInjectors = [];
 window.bonkCodeInjectors.push((code) => {
@@ -218,6 +319,20 @@ window.bonkCodeInjectors.push((code) => {
       `,
   );
 
+  //Input Handler
+  //Credit to gmmaker for regex: https://github.com/SneezingCactus/gmmaker
+  //Original regex: /Date.{0,100}new ([^\(]+).{0,100}\$\(document/
+  code = code.replace(
+    /Date.{0,100}[A-Za-z0-9\$_]{3}\[[0-9]{1,3}\]\[[0-9]{1,3}\];[A-Za-z0-9\$_]{3}\[[0-9]{1,3}\]=new [^\(]+\(\);/,
+    match => {
+      let inputFunc = match.match(/([A-Za-z0-9\$_]{3}\[[0-9]{1,3}\])=new ([^\(]+)\(\);/);
+      return match.replace(inputFunc[0], `${inputFunc[0]} window.sgrAPI.input = ${inputFunc[1]};` +
+          `window.sgrAPI.oldGetInputs = window.sgrAPI.input.getInputs;`+
+          `window.sgrAPI.input.getInputs = () => window.sgrAPI.onInput(window.sgrAPI.oldGetInputs());`
+      );
+    }
+  );
+
   // Remove round limit
   document.getElementById('newbonklobby_roundsinput').removeAttribute("maxlength");
   code = code.replace(
@@ -237,12 +352,6 @@ window.bonkCodeInjectors.push((code) => {
   code = code.replace(
     `function ${mapLoader}`,
     `window.sgrAPI.mapLoader=${mapLoader};function ${mapLoader}`
-  );
-
-  // Token
-  code = code.replace(
-    "[1,10000,25000,100000,500000,8000000,5000000000];",
-    match => match + "window.sgrAPI.setToken(arguments[0]);",
   );
 
   //Function for all callbacks
@@ -277,44 +386,59 @@ window.bonkCodeInjectors.push((code) => {
   return code;
 });
 
-let token = null;
-window.sgrAPI.setToken = t => {
-	token = t;
-};
-
-let onRoundsExists = () => {
-  let roundsInput = document.getElementById("newbonklobby_roundsinput");
-  if(roundsInput !== null) {
-    roundsInput.addEventListener("focus", e => {
-    	e.target.value = "";
-    });
-    roundsInput.addEventListener("blur", e => {
-    	if(e.target.value == "") {
-    		e.target.value = window.bonkHost.toolFunctions.getGameSettings().wl;
-    	}
-    });
-  } else {
-    setTimeout(() => onRoundsExists(), 250);
-  }
-}
-onRoundsExists();
+document.getElementById("newbonklobby_roundsinput").addEventListener("focus", e => {
+	e.target.value = "";
+});
+document.getElementById("newbonklobby_roundsinput").addEventListener("blur", e => {
+	if(e.target.value == "") {
+		e.target.value = window.bonkHost.toolFunctions.getGameSettings().wl;
+	}
+});
 
 window.sgrAPI.originalSend = window.WebSocket.prototype.send;
 window.WebSocket.prototype.send = function(args) {
-  if (this.url.includes("socket.io/?EIO=3&transport=websocket&sid=")) {
+  let sendFilter;
+
+  if (this.url.includes("socket.io/?EIO=3&transport=websocket&sid=") && !this.noSpoof) {
     if (!this.injectedAPI) {
       window.sgrAPI.socket = this;
       this.injectedAPI = true;
 
       window.sgrAPI.originalReceive = this.onmessage;
       this.onmessage = function(args) {
-        window.sgrAPI.onReceive(args.data);
-        return window.sgrAPI.originalReceive.call(this, args);
+        let receiveFilter = window.sgrAPI.onReceive(args.data);
+        if(receiveFilter === undefined || receiveFilter === true) return window.sgrAPI.originalReceive.call(this, args);
+        else return;
       }
+    } else {
+      sendFilter = window.sgrAPI.onSend(args);
     }
   }
 
-  return window.sgrAPI.originalSend.call(this, args);
+  if(sendFilter === undefined || sendFilter === true) return window.sgrAPI.originalSend.call(this, args);
+  else return;
 }
+
+window.sgrAPI.token = null;
+window.sgrAPI.oldPost = () => {};
+document.addEventListener("DOMContentLoaded", () => {
+  let olderPost = $.post;
+  sgrAPI.oldPost = function() {
+    return olderPost.call($, ...arguments).then((output, status) => {
+      if(arguments[0].endsWith("login_auto.php") || arguments[0].endsWith("login_legacy.php")) {
+        sgrAPI.token = output.token;
+      }
+
+      return output;
+    });
+  };
+
+  $.post = function(url, input) {
+    const output = sgrAPI.onPost(url, input);
+    if(output === undefined) return sgrAPI.oldPost(...arguments);
+
+    return output;
+  }
+});
 
 console.log("sgrAPI loaded");

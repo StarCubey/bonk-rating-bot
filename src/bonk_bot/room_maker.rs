@@ -32,11 +32,74 @@ pub struct RoomParameters {
     pub max_players: i32,
     pub min_level: i32,
     pub mode: Mode,
+    pub queue: Queue,
     pub rounds: i32,
-    pub password: Option<String>,
-    pub headless: Option<bool>,
-    pub unlisted: Option<bool>,
+    pub maps: Vec<String>,
+
+    #[serde(default = "strike_num_default")]
+    pub strike_num: u32,
+    #[serde(default = "team_size_default")]
+    pub team_size: usize,
+    #[serde(default = "team_num_default")]
+    pub team_num: usize,
+    #[serde(default = "ffa_min_default")]
+    pub ffa_min: usize,
+    #[serde(default = "ffa_max_default")]
+    pub ffa_max: usize,
+    #[serde(default = "idle_time_default")]
+    pub idle_time: u64,
+    #[serde(default = "pick_time_default")]
+    pub pick_time: u64,
+    #[serde(default = "ready_time_default")]
+    pub ready_time: u64,
+    #[serde(default = "strike_time_default")]
+    pub strike_time: u64,
+    #[serde(default = "game_time_default")]
+    pub game_time: u64,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_headless")]
+    pub headless: bool,
+    #[serde(default = "default_unlisted")]
+    pub unlisted: bool,
     pub leaderboard: Option<String>,
+}
+
+fn strike_num_default() -> u32 {
+    2
+}
+fn team_size_default() -> usize {
+    2
+}
+fn team_num_default() -> usize {
+    2
+}
+fn ffa_min_default() -> usize {
+    2
+}
+fn ffa_max_default() -> usize {
+    7
+}
+fn idle_time_default() -> u64 {
+    5
+}
+fn pick_time_default() -> u64 {
+    60
+}
+fn ready_time_default() -> u64 {
+    60
+}
+fn strike_time_default() -> u64 {
+    20
+}
+fn game_time_default() -> u64 {
+    600
+}
+fn default_headless() -> bool {
+    true
+}
+fn default_unlisted() -> bool {
+    true
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -48,6 +111,13 @@ pub enum Mode {
     Grapple,
     VTOL,
     Classic,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub enum Queue {
+    Singles,
+    Teams,
+    FFA,
 }
 
 ///Buffer 3, blocking send
@@ -77,7 +147,7 @@ impl RoomMaker {
             let mut i = 0;
             loop {
                 let err;
-                match make_client(message.room_parameters.headless.unwrap_or(true)).await {
+                match make_client(message.room_parameters.headless).await {
                     Ok(c) => {
                         match make_room(&c, &mut message.room_parameters).await {
                             Ok(room_link) => {
@@ -178,10 +248,10 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
     }
     let room_info = vec![json!({
         "roomName": room_parameters.name,
-        "roomPass": room_parameters.password.clone().unwrap_or(String::from("")),
+        "roomPass": room_parameters.password.clone(),
         "maxPlayers": room_parameters.max_players,
         "minLevel": room_parameters.min_level,
-        "unlisted": room_parameters.unlisted.unwrap_or(false),
+        "unlisted": room_parameters.unlisted,
     })];
 
     let mode = match &room_parameters.mode {
@@ -193,6 +263,14 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
         Mode::VTOL => "v",
         Mode::Classic => "b",
     };
+
+    let mut teams = false;
+    if let Queue::Teams = &room_parameters.queue {
+        teams = true;
+    }
+    if let Mode::Football = &room_parameters.mode {
+        teams = false;
+    }
 
     let mut sgr_api_file = File::open("dependencies/sgrAPI.user.js").await?;
     let mut sgr_api = String::new();
@@ -345,14 +423,29 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
     })
     .await?;
 
+    //Hopefully fixes problems with team lock failing.
+    sleep(Duration::from_millis(500)).await;
+
     c.execute(
         "sgrAPI.setMode(arguments[0]);\
         sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
         sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
-        sgrAPI.toolFunctions.networkEngine.doTeamLock(true);",
-        vec![json!(mode)],
+        sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
+        if(arguments[1]) sgrAPI.setTeams(true);\
+        window.messageBuffer = [];\
+        sgrAPI.onReceive = message => {window.messageBuffer.push(message);return true;};",
+        vec![json!(mode), json!(teams)],
     )
     .await?;
+
+    if let Some(map) = room_parameters.maps.get(0) {
+        let _ = c
+            .execute(
+                "sgrAPI.loadMap(JSON.parse(arguments[0]));",
+                vec![json!(map)],
+            )
+            .await;
+    }
 
     //Somewhat unreliable.
     /*

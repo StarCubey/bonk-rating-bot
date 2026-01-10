@@ -8,7 +8,7 @@ use crate::{
 #[test]
 fn fuzzy_finder_test() {
     let output = fuzzy_finder(
-        "RDDuwu",
+        "s",
         &vec![
             "StarCubey".to_string(),
             "Arrrd God".to_string(),
@@ -79,4 +79,26 @@ fn openskill() {
     openskill::reverse_pl(&settings, &vec![true], &mut teams_data);
 
     dbg!(teams_data);
+}
+
+#[test]
+fn test() {
+    let ties = vec![false, true, true, false];
+    //Count how many teams a team is tied with plus 1.
+    let mut tie_nums: Vec<usize> = Vec::new();
+    let mut i = 0;
+    while i < tie_nums.len() + 1 {
+        let mut count = 1usize;
+        let mut j = i;
+        while let Some(true) = ties.get(j) {
+            count += 1;
+            j += 1;
+        }
+
+        for _ in 0..count {
+            tie_nums.push(count);
+        }
+
+        i += count;
+    }
 }
