@@ -249,6 +249,7 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                         .await
                     }
                     "pick" | "p" => bonk_commands::pick(room, id, command.join(" ")).await,
+                    "strike" | "s" => bonk_commands::strike(room, id).await,
                     "ready" | "r" => bonk_commands::ready(room, id).await,
                     _ => room.chat(help_string).await,
                 }

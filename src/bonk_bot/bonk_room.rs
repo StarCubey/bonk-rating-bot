@@ -43,9 +43,9 @@ pub struct BonkRoom {
     pub queue: Vec<(Instant, Player)>,
     pub game_players: GamePlayers,
     pub team_flip: bool,
-    //(id, strikes)
     pub map_strikes: Vec<bool>,
-    pub player_strikes: Vec<(i32, i32)>,
+    //(id, strikes)
+    pub player_strikes: Vec<(i32, u32)>,
 }
 
 #[derive(Clone)]
@@ -175,7 +175,7 @@ impl BonkRoom {
         println!("Room closed.");
     }
 
-    pub fn get_queue_cloned(&mut self) -> Vec<Player> {
+    pub fn get_queue_cloned(&self) -> Vec<Player> {
         self.queue
             .iter()
             .filter(|p| p.1.in_room)
@@ -193,6 +193,17 @@ impl BonkRoom {
 
     pub async fn reset(&mut self) {
         //TODO close game if in game, otherwise send all to lobby websocket message.
+
+        for player in &mut self.queue {
+            player.1.ready_cmd = false;
+        }
+        let _ = self
+            .client
+            .execute(
+                "sgrAPI.toolFunctions.networkEngine.allReadyReset();",
+                vec![],
+            )
+            .await;
 
         for p in self.get_queue_cloned() {
             let _ = self
@@ -251,12 +262,20 @@ impl BonkRoom {
         for player in &mut self.queue {
             player.1.ready_cmd = false;
         }
+        let _ = self
+            .client
+            .execute(
+                "sgrAPI.toolFunctions.networkEngine.allReadyReset();",
+                vec![],
+            )
+            .await;
 
-        if self.room_parameters.strike_num <= 0 {
+        if self.room_parameters.strike_num <= 0 || self.room_parameters.maps.len() < 2 {
             self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                 self.room_parameters.ready_time,
             )));
             self.state = State::Ready;
+            self.chat("Use !r to start.".to_string()).await;
         } else {
             self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                 self.room_parameters.strike_time,

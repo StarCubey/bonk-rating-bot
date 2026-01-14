@@ -1,7 +1,8 @@
 use std::time::Duration;
 
+use rand::Rng;
 use serde_json::json;
-use tokio::time;
+use tokio::time::{self, Instant};
 
 use crate::bonk_bot::bonk_room::{GamePlayers, State};
 
@@ -151,6 +152,137 @@ pub async fn pick(room: &mut BonkRoom, id: i32, name: String) {
     }
 }
 
+pub async fn strike(room: &mut BonkRoom, id: i32) {
+    if let State::MapSelection = room.state {
+        let start = room
+            .transition_timer
+            .deadline()
+            .checked_sub(Duration::from_secs(room.room_parameters.strike_time));
+        if let Some(start) = start {
+            if Instant::now().duration_since(start) == Duration::ZERO {
+                return;
+            }
+        }
+
+        let queue_clone = room.queue.clone();
+        let Some((_, player)) = queue_clone.iter().find(|p| p.1.id == id) else {
+            return;
+        };
+        if player.team == 0 {
+            return;
+        }
+
+        let strikes_option = room.player_strikes.iter_mut().find(|p| p.0 == id);
+        let strikes;
+        if let Some(strikes_value) = strikes_option {
+            strikes = strikes_value;
+        } else {
+            let strikes_value = (id, 0);
+            room.player_strikes.push(strikes_value);
+            let strikes_option = room.player_strikes.last_mut();
+            let Some(strikes_value) = strikes_option else {
+                return;
+            };
+            strikes = strikes_value;
+        }
+
+        if strikes.1 >= room.room_parameters.strike_num {
+            room.chat("You've used all of you're strikes".to_string())
+                .await;
+        } else {
+            strikes.1 += 1;
+            let strikes = strikes.clone();
+
+            for player in &mut room.queue {
+                player.1.ready_cmd = false;
+            }
+            let _ = room
+                .client
+                .execute(
+                    "sgrAPI.toolFunctions.networkEngine.allReadyReset();",
+                    vec![],
+                )
+                .await;
+
+            let remaining_maps = room
+                .room_parameters
+                .maps
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    let Some(map_strike) = room.map_strikes.get(*i) else {
+                        return false;
+                    };
+                    !*map_strike
+                })
+                .collect::<Vec<(usize, &String)>>();
+            let map_idx = rand::rng().random_range(0..remaining_maps.len());
+            let Some(new_map) = remaining_maps.get(map_idx) else {
+                return;
+            };
+
+            if let Some(map_strike) = room.map_strikes.get_mut(new_map.0) {
+                *map_strike = true;
+            }
+            let _ = room
+                .client
+                .execute(
+                    "sgrAPI.loadMap(JSON.parse(arguments[0]));",
+                    vec![json!(new_map.1)],
+                )
+                .await;
+
+            let all_strikes_used = room
+                .queue
+                .iter()
+                .filter(|p| p.1.in_room && p.1.team != 0)
+                .map(|p| {
+                    let strikes = room
+                        .player_strikes
+                        .iter()
+                        .find(|strike_player| strike_player.0 == p.1.id);
+                    if let Some(strikes) = strikes {
+                        return strikes.1;
+                    } else {
+                        return 0;
+                    }
+                })
+                .map(|p| p >= room.room_parameters.strike_num)
+                .reduce(|p1, p2| p1 && p2);
+
+            if all_strikes_used == Some(true) {
+                room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
+                    room.room_parameters.ready_time,
+                )));
+                room.state = State::Ready;
+                room.chat("All strikes have been used. Use !r to start.".to_string())
+                    .await;
+            } else if remaining_maps.len() < 2 {
+                room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
+                    room.room_parameters.ready_time,
+                )));
+                room.state = State::Ready;
+                room.chat("All other maps have been struck. Use !r to start.".to_string())
+                    .await;
+            } else {
+                //2 second double strike prevention.
+                room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
+                    room.room_parameters.strike_time + 2,
+                )));
+
+                let remaining = room.room_parameters.strike_num - strikes.1;
+                room.chat(format!(
+                    "{} struck a map. They have {} strike{} remaining.",
+                    player.name,
+                    remaining,
+                    if remaining == 1 { "" } else { "s" },
+                ))
+                .await;
+            }
+        }
+    }
+}
+
 pub async fn ready(room: &mut BonkRoom, id: i32) {
     if room.state == State::MapSelection || room.state == State::Ready {
         let player = room.queue.iter_mut().find(|p| p.1.id == id);
@@ -159,148 +291,6 @@ pub async fn ready(room: &mut BonkRoom, id: i32) {
         room.check_ready(true).await;
     }
 }
-
-// pub async fn pick(arguments: &Vec<&str>, name: &String, bonk_room: &mut BonkRoom) {
-//     let my_name = dotenv::var("BONK_USERNAME").unwrap_or("".to_string());
-//     let captain_name = &bonk_room.player_data.captain.1.name;
-
-//     if let RoomState::Idle | RoomState::DuringGame = bonk_room.state {
-//         bonk_room
-//             .chat_queue
-//             .push_back("You can't pick an opponent right now.".to_string());
-//         return;
-//     }
-//     if *name != *captain_name {
-//         bonk_room
-//             .chat_queue
-//             .push_back(format!("It's {}'s turn to pick.", captain_name));
-//         return;
-//     }
-
-//     let keys: Vec<String> = bonk_room
-//         .player_data
-//         .players
-//         .iter()
-//         .map(|p| p.1.name.clone())
-//         .filter(|p| p != captain_name && *p != my_name)
-//         .collect();
-//     let pick_name = arguments.join(" ");
-//     if pick_name != "".to_string() {
-//         let matches = fuzzy_finder(&pick_name, &keys);
-
-//         if matches.len() == 0 {
-//             bonk_room
-//                 .chat_queue
-//                 .push_back("No matches found. Please try again.".to_string());
-//             return;
-//         } else if matches.len() >= 2 {
-//             bonk_room.chat_queue.push_back(format!(
-//                 "I couldn't find a match. \
-//                 Here are the matches I considered: {}. Please try again.",
-//                 matches.join(", ")
-//             ));
-//             return;
-//         }
-//         let default = &"".to_string();
-//         let match_ = matches.get(0).unwrap_or(default);
-
-//         let default = &(0, Player::new());
-//         let match_ = bonk_room
-//             .player_data
-//             .players
-//             .iter()
-//             .find(|p| p.1.name == *match_)
-//             .unwrap_or(default);
-
-//         let mut team = 1;
-//         if let Mode::Football = bonk_room.room_parameters.mode {
-//             match bonk_room.player_data.team_flip {
-//                 false => team = 2,
-//                 true => team = 3,
-//             }
-//         }
-
-//         match bonk_room.player_data.pick_progress {
-//             0 => {
-//                 let _ = bonk_room
-//                     .client
-//                     .execute(
-//                         "window\
-//                         .bonkHost\
-//                         .toolFunctions\
-//                         .networkEngine\
-//                         .changeOtherTeam(arguments[0], arguments[1]);",
-//                         vec![json!(match_.0), json!(team)],
-//                     )
-//                     .await;
-
-//                 bonk_room.chat_queue.push_back(format!(
-//                     "{} Has been selected! Type !r to start the game.",
-//                     match_.1.name
-//                 ));
-
-//                 bonk_room.player_data.other_player = match_.clone();
-
-//                 bonk_room.player_data.pick_progress = 1;
-//                 bonk_room.state_changed = Instant::now();
-//             }
-//             1..=8 => {
-//                 let _ = bonk_room
-//                     .client
-//                     .execute(
-//                         "sgrAPI\
-//                         .toolFunctions\
-//                         .networkEngine\
-//                         .changeOtherTeam(arguments[0], arguments[1]);",
-//                         vec![json!(bonk_room.player_data.other_player.0), json!(0)],
-//                     )
-//                     .await;
-
-//                 let _ = bonk_room
-//                     .client
-//                     .execute(
-//                         "sgrAPI\
-//                         .toolFunctions\
-//                         .networkEngine\
-//                         .changeOtherTeam(arguments[0], arguments[1]);",
-//                         vec![json!(match_.0), json!(team)],
-//                     )
-//                     .await;
-
-//                 bonk_room.chat_queue.push_back(format!(
-//                     "{} Has been selected! Type \"!r\" to start the game.",
-//                     match_.1.name
-//                 ));
-
-//                 bonk_room.player_data.other_player = match_.clone();
-
-//                 bonk_room.player_data.pick_progress += 1;
-//                 bonk_room.state_changed = Instant::now();
-//             }
-//             _ => bonk_room.chat_queue.push_back(
-//                 "Allowed repicks have been exhausted. Type \"!r\" to start the game.".to_string(),
-//             ),
-//         }
-//     } else {
-//         bonk_room.chat_queue.push_back(
-//             "Error: Player argument missing. Please specify a player to pick.".to_string(),
-//         );
-//     }
-// }
-
-// pub async fn ready(name: &String, bonk_room: &mut BonkRoom) {
-//     if let RoomState::Idle | RoomState::DuringGame = bonk_room.state {
-//         return;
-//     } else if bonk_room.player_data.pick_progress == 0 {
-//         return;
-//     } else {
-//         if *name == bonk_room.player_data.captain.1.name {
-//             bonk_room.player_data.captain.1.ready = true;
-//         } else if *name == bonk_room.player_data.other_player.1.name {
-//             bonk_room.player_data.other_player.1.ready = true;
-//         }
-//     }
-// }
 
 pub fn fuzzy_finder(query: &str, keys: &[String]) -> Vec<String> {
     let query_lower: Vec<u8> = query
