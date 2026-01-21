@@ -138,6 +138,7 @@ pub async fn pick(room: &mut BonkRoom, id: i32, name: String) {
                         room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                             room.room_parameters.pick_time,
                         )));
+                        room.warning_step = 0;
                         room.chat(format!("{}, pick a teammate.", picker.name))
                             .await;
                         break;
@@ -254,6 +255,7 @@ pub async fn strike(room: &mut BonkRoom, id: i32) {
                 room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                     room.room_parameters.ready_time,
                 )));
+                room.warning_step = 0;
                 room.state = State::Ready;
                 room.chat("All strikes have been used. Use !r to start.".to_string())
                     .await;
@@ -261,6 +263,7 @@ pub async fn strike(room: &mut BonkRoom, id: i32) {
                 room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                     room.room_parameters.ready_time,
                 )));
+                room.warning_step = 0;
                 room.state = State::Ready;
                 room.chat("All other maps have been struck. Use !r to start.".to_string())
                     .await;
@@ -269,6 +272,7 @@ pub async fn strike(room: &mut BonkRoom, id: i32) {
                 room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                     room.room_parameters.strike_time + 2,
                 )));
+                room.warning_step = 0;
 
                 let remaining = room.room_parameters.strike_num - strikes.1;
                 room.chat(format!(

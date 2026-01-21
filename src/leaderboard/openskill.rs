@@ -194,9 +194,10 @@ async fn get_teams(
         let mut team_data: Vec<PlayerData> = Vec::new();
         for player in team {
             let player_data_option: Option<PlayerData> = sqlx::query_as(
-                "SELECT id, name, rating, rating_deviation, display_rating, last_updated FROM lb_players WHERE name = $1",
+                "SELECT id, name, rating, rating_deviation, display_rating, last_updated FROM lb_players WHERE name = $1 AND lb_id = $2",
             )
             .bind(&player)
+            .bind(lb.id)
             .fetch_optional(&mut **trans)
             .await?;
 

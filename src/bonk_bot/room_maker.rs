@@ -102,7 +102,7 @@ fn default_unlisted() -> bool {
     true
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, PartialEq, Clone)]
 pub enum Mode {
     Football,
     Simple,

@@ -76,6 +76,9 @@ For non-team games, the score array will be similar to the player array where sc
 window.sgrAPI.nextScores
 Setting this variable to a score array will load that score at the beginning of the next game.
 This is similar to the Bonk Host keep scores feature. window.sgrBotAPI.nextScores will be undefined when not in use.
+
+sgrAPI.stateFunctions.hostHandlePlayerJoined(id, sgrAPI.players.length, team)
+This is bonk host freejoin. This moves a player into a game so that they appear in the next round.
 */
 
 window.sgrAPI = {};
@@ -377,6 +380,7 @@ window.bonkCodeInjectors.push((code) => {
     /[A-Za-z0-9\$_]{3}\[[0-9]{1,3}\]=\{id:-1,element:null\};/,
     match => match + "window.sgrAPI.gameInfo = arguments;",
   );
+  code = code.replace("{a:0.0};", "{a:0.0};window.sgrAPI.stateFunctions = this;");
   code = code.replace(
     "newbonklobby_votewindow_close",
     "window.sgrAPI.players = arguments[1]; newbonklobby_votewindow_close",

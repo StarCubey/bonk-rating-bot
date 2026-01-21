@@ -215,9 +215,11 @@ impl Leaderboard {
     }
 
     async fn update_leaderboard(&self) -> Result<()> {
-        let mut players: Vec<PlayerData> = sqlx::query_as("SELECT * from lb_players")
-            .fetch_all(self.db.as_ref())
-            .await?;
+        let mut players: Vec<PlayerData> =
+            sqlx::query_as("SELECT * from lb_players WHERE lb_id = $1")
+                .bind(self.id)
+                .fetch_all(self.db.as_ref())
+                .await?;
 
         players.sort_by(|a, b| b.display_rating.total_cmp(&a.display_rating));
 

@@ -16,6 +16,7 @@ use tokio::{
 };
 
 use crate::bonk_bot::events;
+use crate::bonk_bot::events::on_game_end;
 use crate::bonk_bot::room_maker;
 use crate::bonk_bot::room_maker::Mode;
 use crate::leaderboard::LeaderboardMessage;
@@ -38,6 +39,7 @@ pub struct BonkRoom {
     pub chat_clear_interval: Interval,
     pub state: State,
     pub transition_timer: Pin<Box<Sleep>>,
+    pub warning_step: u32,
     pub chat_queue: VecDeque<String>,
     pub chat_burst: i32,
     pub queue: Vec<(Instant, Player)>,
@@ -48,7 +50,7 @@ pub struct BonkRoom {
     pub player_strikes: Vec<(i32, u32)>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum GamePlayers {
     Singles {
         picker: Option<Player>,
@@ -73,7 +75,7 @@ pub enum State {
     InGame,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Player {
     pub id: i32,
     pub team: i32,
@@ -107,7 +109,7 @@ impl BonkRoom {
         leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
         room_parameters: RoomParameters,
     ) -> BonkRoom {
-        let mut update_interval = time::interval(Duration::from_millis(100));
+        let mut update_interval = time::interval(Duration::from_millis(250));
         update_interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
 
         let mut chat_interval = time::interval(Duration::from_secs(4));
@@ -141,6 +143,7 @@ impl BonkRoom {
             chat_clear_interval,
             state: State::Idle,
             transition_timer,
+            warning_step: 0,
             chat_queue: VecDeque::new(),
             chat_burst: 0,
             queue: Vec::new(),
@@ -192,10 +195,40 @@ impl BonkRoom {
     }
 
     pub async fn reset(&mut self) {
-        //TODO close game if in game, otherwise send all to lobby websocket message.
+        let in_lobby = self
+            .client
+            .execute(
+                "return document.getElementById('newbonklobby').style.opacity === '1';",
+                vec![],
+            )
+            .await;
+        if let Ok(in_lobby) = in_lobby {
+            if let Ok(in_lobby) = from_value::<bool>(in_lobby) {
+                if !in_lobby {
+                    let _ = self
+                        .client
+                        .execute(
+                            "document.getElementById(\"pretty_top_exit\").click();",
+                            vec![],
+                        )
+                        .await;
+                } else {
+                    let _ = self
+                        .client
+                        .execute("sgrAPI.send(\"42[14]\");", vec![])
+                        .await;
+                }
+            }
+        }
 
         for player in &mut self.queue {
             player.1.ready_cmd = false;
+            if player.1.in_room && player.1.team != 0 {
+                let _ = self.client.execute(
+                    "sgrAPI.toolFunctions.networkEngine.changeOtherTeam(arguments[0], arguments[1]);",
+                    vec![json!(player.1.id), json!(0)]
+                ).await;
+            }
         }
         let _ = self
             .client
@@ -230,6 +263,7 @@ impl BonkRoom {
         self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
             self.room_parameters.idle_time,
         )));
+        self.warning_step = 0;
         self.state = State::Idle;
     }
 
@@ -238,7 +272,9 @@ impl BonkRoom {
             self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                 self.room_parameters.ready_time,
             )));
+            self.warning_step = 0;
             self.state = State::Ready;
+            self.chat("Use !r to start.".to_string()).await;
             return;
         }
 
@@ -274,12 +310,14 @@ impl BonkRoom {
             self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                 self.room_parameters.ready_time,
             )));
+            self.warning_step = 0;
             self.state = State::Ready;
             self.chat("Use !r to start.".to_string()).await;
         } else {
             self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                 self.room_parameters.strike_time,
             )));
+            self.warning_step = 0;
             self.state = State::MapSelection;
 
             if let State::MapSelection = self.state {
@@ -316,6 +354,7 @@ impl BonkRoom {
                 if ready >= 2 {
                     let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
                     self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+                    self.warning_step = 0;
                     self.state = State::GameStarting;
                 } else {
                     if chat && self.chat_queue.len() == 0 {
@@ -345,6 +384,7 @@ impl BonkRoom {
                 if ready >= total {
                     let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
                     self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+                    self.warning_step = 0;
                     self.state = State::GameStarting;
                 } else {
                     if chat && self.chat_queue.len() == 0 {
@@ -368,6 +408,7 @@ impl BonkRoom {
                 if ready >= in_game.len() {
                     let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
                     self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+                    self.warning_step = 0;
                     self.state = State::GameStarting;
                 } else {
                     if chat && self.chat_queue.len() == 0 {
@@ -379,48 +420,97 @@ impl BonkRoom {
         }
     }
 
-    pub async fn chat(&mut self, message: String) {
-        self.chat_queue.push_back(message);
-        self.chat_update().await;
-    }
-
     async fn update(&mut self) {
-        //TODO Check time left on transition timer, reminders, required actions.
         //TODO check if room closed.
 
-        if let State::GameStarting = self.state {
-            let output = self
-                .client
-                .execute(
-                    "return document.getElementById('newbonklobby').style.opacity === '1';",
-                    vec![],
-                )
-                .await;
-            if let Ok(output) = output {
-                if let Ok(output) = from_value::<bool>(output) {
-                    if !output {
-                        self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
-                            self.room_parameters.game_time,
-                        )));
-                        self.state = State::InGame
-                    }
+        let remaining_time = self.transition_timer.deadline() - Instant::now();
+        match self.state {
+            State::Idle => (),
+            State::Pick => {
+                let warn = self.room_parameters.pick_time / 2;
+                if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
+                    self.warning_step = 1;
+                    self.chat(format!("{} left to pick.", sec_to_string(warn)))
+                        .await;
+                }
+            }
+            State::MapSelection => (),
+            State::Ready => {
+                let warn = self.room_parameters.ready_time / 2;
+                if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
+                    self.warning_step = 1;
+                    self.chat(format!(
+                        "Use !r to start. {} until the match is cancelled.",
+                        sec_to_string(warn)
+                    ))
+                    .await;
+                }
+            }
+            State::GameStarting => (),
+            State::InGame => {
+                let warn1 = self.room_parameters.game_time / 2;
+                let warn2 = 60;
+                let warn3 = 30;
+                let warn4 = 10;
+
+                if self.warning_step < 4
+                    && remaining_time < Duration::from_secs(warn4)
+                    && warn1 / 2 >= warn4
+                {
+                    self.warning_step = 4;
+                    self.chat(format!("{} left.", sec_to_string(warn4))).await;
+                } else if self.warning_step < 3
+                    && remaining_time < Duration::from_secs(warn3)
+                    && warn1 / 2 >= warn3
+                {
+                    self.warning_step = 3;
+                    self.chat(format!("{} left.", sec_to_string(warn3))).await;
+                } else if self.warning_step < 2
+                    && remaining_time < Duration::from_secs(warn2)
+                    && warn1 / 2 >= warn2
+                {
+                    self.warning_step = 2;
+                    self.chat(format!("{} until timeout.", sec_to_string(warn2)))
+                        .await;
+                } else if self.warning_step < 1 && remaining_time < Duration::from_secs(warn1) {
+                    self.warning_step = 1;
+                    self.chat(format!("{} until timeout.", sec_to_string(warn1)))
+                        .await;
                 }
             }
         }
 
-        if let State::InGame = self.state {
+        'in_lobby: {
+            let (State::GameStarting | State::InGame) = self.state else {
+                break 'in_lobby;
+            };
+
             let output = self
                 .client
                 .execute(
                     "return document.getElementById('newbonklobby').style.opacity === '1';",
-                    vec![],
+                    vec![json!(self.room_parameters.mode == Mode::Football)],
                 )
                 .await;
-            if let Ok(output) = output {
-                if let Ok(output) = from_value::<bool>(output) {
-                    if output {
-                        events::on_game_end(self).await;
-                    }
+            let Ok(output) = output else {
+                break 'in_lobby;
+            };
+            let Ok(output) = from_value::<bool>(output) else {
+                break 'in_lobby;
+            };
+
+            if let State::GameStarting = self.state {
+                if !output {
+                    self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
+                        self.room_parameters.game_time,
+                    )));
+                    self.warning_step = 0;
+                    self.state = State::InGame
+                }
+            }
+            if let State::InGame = self.state {
+                if output {
+                    events::on_game_end(self, None).await;
                 }
             }
         }
@@ -447,6 +537,7 @@ impl BonkRoom {
                             let value = self.queue.get_mut(i).unwrap_or(default);
                             value.0 = Instant::now();
                             value.1.team = player.team;
+                            value.1.id = player.id;
 
                             if !value.1.in_room {
                                 joining_players.push(value.1.clone());
@@ -511,6 +602,11 @@ impl BonkRoom {
                 }
             }
         }
+    }
+
+    pub async fn chat(&mut self, message: String) {
+        self.chat_queue.push_back(message);
+        self.chat_update().await;
     }
 
     async fn chat_update(&mut self) {
@@ -892,4 +988,18 @@ impl BonkRoom {
     //             }
     //         }
     //     }
+}
+
+pub fn sec_to_string(time: u64) -> String {
+    let mut output = vec![];
+    let minutes = time / 60;
+    if minutes > 0 {
+        output.push(format!("{} minutes", minutes));
+    }
+    let seconds = time % 60;
+    if minutes == 0 || seconds > 0 {
+        output.push(format!("{} seconds", seconds));
+    }
+
+    output.join(" and ")
 }
