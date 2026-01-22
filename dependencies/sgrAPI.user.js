@@ -390,15 +390,6 @@ window.bonkCodeInjectors.push((code) => {
   return code;
 });
 
-document.getElementById("newbonklobby_roundsinput").addEventListener("focus", e => {
-	e.target.value = "";
-});
-document.getElementById("newbonklobby_roundsinput").addEventListener("blur", e => {
-	if(e.target.value == "") {
-		e.target.value = window.bonkHost.toolFunctions.getGameSettings().wl;
-	}
-});
-
 window.sgrAPI.originalSend = window.WebSocket.prototype.send;
 window.WebSocket.prototype.send = function(args) {
   let sendFilter;
@@ -443,6 +434,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
     return output;
   }
+
+  document.getElementById("newbonklobby_roundsinput").addEventListener("focus", e => {
+	e.target.value = "";
+  });
+  document.getElementById("newbonklobby_roundsinput").addEventListener("blur", e => {
+    if(e.target.value == "") {
+      e.target.value = window.bonkHost.toolFunctions.getGameSettings().wl;
+    }
+  });
 });
 
 console.log("sgrAPI loaded");

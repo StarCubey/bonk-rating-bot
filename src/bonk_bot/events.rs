@@ -28,9 +28,32 @@ pub async fn on_transition_timer_expired(room: &mut BonkRoom) {
             room.chat("The current map has been selected. Use !r to start.".to_string())
                 .await;
         }
-        State::Ready => (), //TODO
+        State::Ready => {
+            let not_ready = room
+                .get_in_game()
+                .drain(..)
+                .filter(|p| !p.ready && !p.ready_cmd)
+                .collect::<Vec<Player>>();
+
+            for player in not_ready {
+                let _ = room
+                    .client
+                    .execute(
+                        "sgrAPI.toolFunctions.networkEngine.kickPlayer(arguments[0]);",
+                        vec![json!(player.id)],
+                    )
+                    .await;
+
+                let idx = room.queue.iter().position(|p| p.1.id == player.id);
+                if let Some(idx) = idx {
+                    room.queue.remove(idx);
+                }
+            }
+
+            room.reset().await;
+        }
         State::GameStarting => room.transition_timer = Box::pin(time::sleep(Duration::MAX)),
-        State::InGame => (), //TODO
+        State::InGame => on_game_end(room, None).await,
     }
 }
 
@@ -570,16 +593,16 @@ pub async fn on_game_end(room: &mut BonkRoom, mut winner: Option<usize>) {
 
             if let Some(leaderboard_tx) = &room.leaderboard_tx {
                 if let Mode::Football = room.room_parameters.mode {
-                    if winner != Some(3) && winner != Some(2) {
+                    if !winner.is_some() {
                         let value = room
                             .client
                             .execute(
                                 "\
-                            if(sgrAPI.footballState.scores[3] === arguments[0]) return 3;\
-                            if(sgrAPI.footballState.scores[2] === arguments[0]) return 2;\
+                            if(sgrAPI.footballState.scores[3] > sgrAPI.footballState.scores[2]) return 3;\
+                            if(sgrAPI.footballState.scores[2] < sgrAPI.footballState.scores[3]) return 2;\
                             return 0;\
                             ",
-                                vec![json!(room.room_parameters.rounds)],
+                                vec![],
                             )
                             .await;
                         if let Ok(value) = value {
@@ -589,29 +612,27 @@ pub async fn on_game_end(room: &mut BonkRoom, mut winner: Option<usize>) {
                         }
                     }
                     if let Some(winner) = winner {
-                        if winner == 3 || winner == 2 {
-                            let (match_string_tx, match_string_rx) = oneshot::channel();
-                            let _ = leaderboard_tx
-                                .send(LeaderboardMessage::Update {
-                                    teams: vec![
-                                        vec![if (winner == 2) ^ room.team_flip {
-                                            picker.name.clone()
-                                        } else {
-                                            picked.name.clone()
-                                        }],
-                                        vec![if (winner == 3) ^ room.team_flip {
-                                            picker.name.clone()
-                                        } else {
-                                            picked.name.clone()
-                                        }],
-                                    ],
-                                    ties: vec![false],
-                                    match_str: match_string_tx,
-                                })
-                                .await;
-                            if let Ok(Ok(match_string)) = match_string_rx.await {
-                                room.chat(match_string).await;
-                            }
+                        let (match_string_tx, match_string_rx) = oneshot::channel();
+                        let _ = leaderboard_tx
+                            .send(LeaderboardMessage::Update {
+                                teams: vec![
+                                    vec![if (winner == 2 || winner == 0) ^ room.team_flip {
+                                        picker.name.clone()
+                                    } else {
+                                        picked.name.clone()
+                                    }],
+                                    vec![if (winner == 3) ^ room.team_flip {
+                                        picker.name.clone()
+                                    } else {
+                                        picked.name.clone()
+                                    }],
+                                ],
+                                ties: vec![winner == 0],
+                                match_str: match_string_tx,
+                            })
+                            .await;
+                        if let Ok(Ok(match_string)) = match_string_rx.await {
+                            room.chat(match_string).await;
                         }
                     }
                 } else {
@@ -631,32 +652,45 @@ pub async fn on_game_end(room: &mut BonkRoom, mut winner: Option<usize>) {
                         .await;
                     if let Ok(scores) = scores {
                         if let Ok(scores) = from_value::<Vec<Score>>(scores) {
-                            if winner == None {
-                                let winner_score = scores
-                                    .iter()
-                                    .find(|score| score.score == room.room_parameters.rounds);
-                                if let Some(winner_score) = winner_score {
-                                    winner = Some(winner_score.id as usize);
+                            if !winner.is_some() {
+                                'winner: {
+                                    if winner != None {
+                                        break 'winner;
+                                    };
+                                    let Some(p1) = scores.get(0) else {
+                                        break 'winner;
+                                    };
+                                    let Some(p2) = scores.get(1) else {
+                                        break 'winner;
+                                    };
+
+                                    if p1.score > p2.score {
+                                        winner = Some(p1.id as usize);
+                                    } else if p2.score > p1.score {
+                                        winner = Some(p2.id as usize)
+                                    } else {
+                                        winner = Some(0);
+                                    }
                                 }
                             }
                             if let Some(winner) = winner {
-                                let winner = winner as i32;
+                                let picker_lostnt = winner as i32 == picker.id || winner == 0;
                                 let (match_string_tx, match_string_rx) = oneshot::channel();
                                 let _ = leaderboard_tx
                                     .send(LeaderboardMessage::Update {
                                         teams: vec![
-                                            vec![if picker.id == winner {
+                                            vec![if picker_lostnt {
                                                 picker.name.clone()
                                             } else {
                                                 picked.name.clone()
                                             }],
-                                            vec![if picker.id != winner {
+                                            vec![if !picker_lostnt {
                                                 picker.name.clone()
                                             } else {
                                                 picked.name.clone()
                                             }],
                                         ],
-                                        ties: vec![false],
+                                        ties: vec![winner == 0],
                                         match_str: match_string_tx,
                                     })
                                     .await;

@@ -16,7 +16,6 @@ use tokio::{
 };
 
 use crate::bonk_bot::events;
-use crate::bonk_bot::events::on_game_end;
 use crate::bonk_bot::room_maker;
 use crate::bonk_bot::room_maker::Mode;
 use crate::leaderboard::LeaderboardMessage;
@@ -194,6 +193,49 @@ impl BonkRoom {
             .collect()
     }
 
+    pub fn get_in_game(&self) -> Vec<Player> {
+        let mut in_game = vec![];
+        match &self.game_players {
+            GamePlayers::Singles { picker, picked } => {
+                let Some(picker) = picker else { return in_game };
+                let Some(picker) = self.queue.iter().find(|p| p.1.id == picker.id) else {
+                    return in_game;
+                };
+                in_game.push(picker.1.clone());
+                let Some(picked) = picked else { return in_game };
+                let Some(picked) = self.queue.iter().find(|p| p.1.id == picked.id) else {
+                    return in_game;
+                };
+                in_game.push(picked.1.clone());
+            }
+            GamePlayers::Teams {
+                teams,
+                picker_idx: _,
+            } => {
+                for team in teams {
+                    for player in team {
+                        let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
+                            return in_game;
+                        };
+                        in_game.push(player.1.clone());
+                    }
+                }
+            }
+            GamePlayers::FFA {
+                in_game: ffa_in_game,
+            } => {
+                for player in ffa_in_game {
+                    let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
+                        return in_game;
+                    };
+                    in_game.push(player.1.clone());
+                }
+            }
+        }
+
+        in_game
+    }
+
     pub async fn reset(&mut self) {
         let in_lobby = self
             .client
@@ -330,94 +372,109 @@ impl BonkRoom {
     }
 
     pub async fn check_ready(&mut self, chat: bool) {
-        match &self.game_players {
-            GamePlayers::Singles { picker, picked } => {
-                let mut ready = 0;
-                let Some(picker) = picker else { return };
-                let Some(picked) = picked else { return };
-                let Some(picker) = self.queue.iter().find(|p| p.1.id == picker.id) else {
-                    return;
-                };
-                let Some(picked) = self.queue.iter().find(|p| p.1.id == picked.id) else {
-                    return;
-                };
-                let picker = picker.1.clone();
-                let picked = picked.1.clone();
+        let in_game = self.get_in_game();
+        let ready = in_game.iter().filter(|p| p.ready || p.ready_cmd).count();
 
-                if picker.ready || picker.ready_cmd {
-                    ready += 1;
-                }
-                if picked.ready || picked.ready_cmd {
-                    ready += 1;
-                }
-
-                if ready >= 2 {
-                    let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
-                    self.transition_timer = Box::pin(time::sleep(Duration::MAX));
-                    self.warning_step = 0;
-                    self.state = State::GameStarting;
-                } else {
-                    if chat && self.chat_queue.len() == 0 {
-                        self.chat(format!("{}/2 players ready.", ready)).await;
-                    }
-                }
-            }
-            GamePlayers::Teams {
-                teams,
-                picker_idx: _,
-            } => {
-                let mut ready = 0;
-                let mut total = 0;
-                for team in teams {
-                    for player in team {
-                        total += 1;
-                        let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
-                            return;
-                        };
-                        let player = player.1.clone();
-                        if player.ready || player.ready_cmd {
-                            ready += 1;
-                        }
-                    }
-                }
-
-                if ready >= total {
-                    let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
-                    self.transition_timer = Box::pin(time::sleep(Duration::MAX));
-                    self.warning_step = 0;
-                    self.state = State::GameStarting;
-                } else {
-                    if chat && self.chat_queue.len() == 0 {
-                        self.chat(format!("{}/{} players ready.", ready, total))
-                            .await;
-                    }
-                }
-            }
-            GamePlayers::FFA { in_game } => {
-                let mut ready = 0;
-                for player in in_game {
-                    let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
-                        return;
-                    };
-                    let player = player.1.clone();
-                    if player.ready || player.ready_cmd {
-                        ready += 1;
-                    }
-                }
-
-                if ready >= in_game.len() {
-                    let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
-                    self.transition_timer = Box::pin(time::sleep(Duration::MAX));
-                    self.warning_step = 0;
-                    self.state = State::GameStarting;
-                } else {
-                    if chat && self.chat_queue.len() == 0 {
-                        self.chat(format!("{}/{} players ready.", ready, in_game.len()))
-                            .await;
-                    }
-                }
+        if ready >= in_game.len() {
+            let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
+            self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+            self.warning_step = 0;
+            self.state = State::GameStarting;
+        } else {
+            if chat && self.chat_queue.len() == 0 {
+                self.chat(format!("{}/{} players ready.", ready, in_game.len()))
+                    .await;
             }
         }
+
+        // match &self.game_players {
+        //     GamePlayers::Singles { picker, picked } => {
+        //         let mut ready = 0;
+        //         let Some(picker) = picker else { return };
+        //         let Some(picked) = picked else { return };
+        //         let Some(picker) = self.queue.iter().find(|p| p.1.id == picker.id) else {
+        //             return;
+        //         };
+        //         let Some(picked) = self.queue.iter().find(|p| p.1.id == picked.id) else {
+        //             return;
+        //         };
+        //         let picker = picker.1.clone();
+        //         let picked = picked.1.clone();
+
+        //         if picker.ready || picker.ready_cmd {
+        //             ready += 1;
+        //         }
+        //         if picked.ready || picked.ready_cmd {
+        //             ready += 1;
+        //         }
+
+        //         if ready >= 2 {
+        //             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
+        //             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+        //             self.warning_step = 0;
+        //             self.state = State::GameStarting;
+        //         } else {
+        //             if chat && self.chat_queue.len() == 0 {
+        //                 self.chat(format!("{}/2 players ready.", ready)).await;
+        //             }
+        //         }
+        //     }
+        //     GamePlayers::Teams {
+        //         teams,
+        //         picker_idx: _,
+        //     } => {
+        //         let mut ready = 0;
+        //         let mut total = 0;
+        //         for team in teams {
+        //             for player in team {
+        //                 total += 1;
+        //                 let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
+        //                     return;
+        //                 };
+        //                 let player = player.1.clone();
+        //                 if player.ready || player.ready_cmd {
+        //                     ready += 1;
+        //                 }
+        //             }
+        //         }
+
+        //         if ready >= total {
+        //             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
+        //             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+        //             self.warning_step = 0;
+        //             self.state = State::GameStarting;
+        //         } else {
+        //             if chat && self.chat_queue.len() == 0 {
+        //                 self.chat(format!("{}/{} players ready.", ready, total))
+        //                     .await;
+        //             }
+        //         }
+        //     }
+        //     GamePlayers::FFA { in_game } => {
+        //         let mut ready = 0;
+        //         for player in in_game {
+        //             let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
+        //                 return;
+        //             };
+        //             let player = player.1.clone();
+        //             if player.ready || player.ready_cmd {
+        //                 ready += 1;
+        //             }
+        //         }
+
+        //         if ready >= in_game.len() {
+        //             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
+        //             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+        //             self.warning_step = 0;
+        //             self.state = State::GameStarting;
+        //         } else {
+        //             if chat && self.chat_queue.len() == 0 {
+        //                 self.chat(format!("{}/{} players ready.", ready, in_game.len()))
+        //                     .await;
+        //             }
+        //         }
+        //     }
+        // }
     }
 
     async fn update(&mut self) {
