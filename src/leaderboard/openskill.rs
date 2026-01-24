@@ -106,18 +106,16 @@ pub fn reverse_pl(
             let Some(team) = team_ratings.get(i) else {
                 continue;
             };
-            //Ratings are divided by the deviation of a logistic distribution when calculating win probability.
             //Ratings are negative in order to calculate the probability of losing
             //instead of the probability of winning for reverse Plackett-Luce.
-            let exp_r = (-team.r / c * f64::consts::PI / 3f64.sqrt()).exp();
+            let exp_r = (-team.r / c).exp();
             tie_group.push(exp_r);
 
             last_c_q += exp_r;
+            i += 1;
         }
         c_qs.push(last_c_q);
         exp_rs.push(tie_group);
-
-        i += tie_num;
     }
 
     let mut delta_rs = Vec::new();

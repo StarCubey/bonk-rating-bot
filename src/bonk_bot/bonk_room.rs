@@ -26,6 +26,7 @@ use super::room_maker::RoomParameters;
 ///buffer 10, blocking send
 pub enum BonkRoomMessage {
     Close,
+    ForceClose,
 }
 
 pub struct BonkRoom {
@@ -38,6 +39,7 @@ pub struct BonkRoom {
     pub chat_clear_interval: Interval,
     pub state: State,
     pub transition_timer: Pin<Box<Sleep>>,
+    pub closing: bool,
     pub warning_step: u32,
     pub chat_queue: VecDeque<String>,
     pub chat_burst: i32,
@@ -142,6 +144,7 @@ impl BonkRoom {
             chat_clear_interval,
             state: State::Idle,
             transition_timer,
+            closing: false,
             warning_step: 0,
             chat_queue: VecDeque::new(),
             chat_burst: 0,
@@ -169,7 +172,36 @@ impl BonkRoom {
                     ).await;
                 }
                 message = self.rx.recv() => match message {
-                    Some(BonkRoomMessage::Close) => break,
+                    Some(BonkRoomMessage::Close) => {
+                        match &self.state {
+                            State::Idle => {
+                                let _ = self
+                                    .client
+                                    .execute(
+                                        "sgrAPI.toolFunctions.networkEngine.chatMessage(\"Room closed.\");",
+                                        vec![],
+                                    )
+                                    .await;
+                                time::sleep(Duration::from_secs(1)).await;
+                                break;
+                            },
+                            _ => {
+                                self.chat("Room closing soon.".to_string()).await;
+                                self.closing = true;
+                            }
+                        }
+                    },
+                    Some(BonkRoomMessage::ForceClose) => {
+                        let _ = self
+                            .client
+                            .execute(
+                                "sgrAPI.toolFunctions.networkEngine.chatMessage(\"Room closed.\");",
+                                vec![],
+                            )
+                            .await;
+                        time::sleep(Duration::from_secs(1)).await;
+                        break;
+                    },
                     None => break,
                 }
             }
@@ -237,6 +269,21 @@ impl BonkRoom {
     }
 
     pub async fn reset(&mut self) {
+        if self.closing {
+            let _ = self
+                .client
+                .execute(
+                    "sgrAPI.toolFunctions.networkEngine.chatMessage(\"Room closed.\");",
+                    vec![],
+                )
+                .await;
+            time::sleep(Duration::from_secs(1)).await;
+            self.rx.close();
+            self.transition_timer = Box::pin(time::sleep(Duration::MAX));
+            self.state = State::Idle;
+            return;
+        }
+
         let in_lobby = self
             .client
             .execute(
@@ -386,95 +433,6 @@ impl BonkRoom {
                     .await;
             }
         }
-
-        // match &self.game_players {
-        //     GamePlayers::Singles { picker, picked } => {
-        //         let mut ready = 0;
-        //         let Some(picker) = picker else { return };
-        //         let Some(picked) = picked else { return };
-        //         let Some(picker) = self.queue.iter().find(|p| p.1.id == picker.id) else {
-        //             return;
-        //         };
-        //         let Some(picked) = self.queue.iter().find(|p| p.1.id == picked.id) else {
-        //             return;
-        //         };
-        //         let picker = picker.1.clone();
-        //         let picked = picked.1.clone();
-
-        //         if picker.ready || picker.ready_cmd {
-        //             ready += 1;
-        //         }
-        //         if picked.ready || picked.ready_cmd {
-        //             ready += 1;
-        //         }
-
-        //         if ready >= 2 {
-        //             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
-        //             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
-        //             self.warning_step = 0;
-        //             self.state = State::GameStarting;
-        //         } else {
-        //             if chat && self.chat_queue.len() == 0 {
-        //                 self.chat(format!("{}/2 players ready.", ready)).await;
-        //             }
-        //         }
-        //     }
-        //     GamePlayers::Teams {
-        //         teams,
-        //         picker_idx: _,
-        //     } => {
-        //         let mut ready = 0;
-        //         let mut total = 0;
-        //         for team in teams {
-        //             for player in team {
-        //                 total += 1;
-        //                 let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
-        //                     return;
-        //                 };
-        //                 let player = player.1.clone();
-        //                 if player.ready || player.ready_cmd {
-        //                     ready += 1;
-        //                 }
-        //             }
-        //         }
-
-        //         if ready >= total {
-        //             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
-        //             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
-        //             self.warning_step = 0;
-        //             self.state = State::GameStarting;
-        //         } else {
-        //             if chat && self.chat_queue.len() == 0 {
-        //                 self.chat(format!("{}/{} players ready.", ready, total))
-        //                     .await;
-        //             }
-        //         }
-        //     }
-        //     GamePlayers::FFA { in_game } => {
-        //         let mut ready = 0;
-        //         for player in in_game {
-        //             let Some(player) = self.queue.iter().find(|p| p.1.id == player.id) else {
-        //                 return;
-        //             };
-        //             let player = player.1.clone();
-        //             if player.ready || player.ready_cmd {
-        //                 ready += 1;
-        //             }
-        //         }
-
-        //         if ready >= in_game.len() {
-        //             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
-        //             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
-        //             self.warning_step = 0;
-        //             self.state = State::GameStarting;
-        //         } else {
-        //             if chat && self.chat_queue.len() == 0 {
-        //                 self.chat(format!("{}/{} players ready.", ready, in_game.len()))
-        //                     .await;
-        //             }
-        //         }
-        //     }
-        // }
     }
 
     async fn update(&mut self) {
@@ -684,378 +642,25 @@ impl BonkRoom {
             }
         }
     }
-
-    // async fn next_in_queue(&mut self) {
-    //     if self.player_data.players.len() < 3 {
-    //         match self.state {
-    //             RoomState::Idle => (),
-    //             _ => {
-    //                 self.state = RoomState::Idle;
-    //                 self.state_changed = Instant::now();
-    //             }
-    //         }
-    //     } else if self.player_data.players.len() < 4 {
-    //         let my_name = dotenv::var("BONK_USERNAME").unwrap_or("".to_string());
-    //         let filtered_players: Vec<&(usize, Player)> = self
-    //             .player_data
-    //             .players
-    //             .iter()
-    //             .filter(|p| p.1.name != my_name)
-    //             .collect();
-
-    //         let mut captain_team = 1;
-    //         let mut other_player_team = 1;
-    //         if let Mode::Football = self.room_parameters.mode {
-    //             self.player_data.team_flip = rand::random();
-    //             match self.player_data.team_flip {
-    //                 false => {
-    //                     captain_team = 3;
-    //                     other_player_team = 2;
-    //                 }
-    //                 true => {
-    //                     captain_team = 2;
-    //                     other_player_team = 3;
-    //                 }
-    //             }
-    //         }
-
-    //         if let Some(&captain) = filtered_players.get(0) {
-    //             let _ = self
-    //                 .client
-    //                 .execute(
-    //                     "sgrAPI\
-    //                         .toolFunctions\
-    //                         .networkEngine\
-    //                         .changeOtherTeam(arguments[0], arguments[1]);",
-    //                     vec![json!(captain.0), json!(captain_team)],
-    //                 )
-    //                 .await;
-
-    //             self.player_data.captain = captain.clone();
-    //         }
-
-    //         if let Some(&other_player) = filtered_players.get(1) {
-    //             let _ = self
-    //                 .client
-    //                 .execute(
-    //                     "sgrAPI\
-    //                         .toolFunctions\
-    //                         .networkEngine\
-    //                         .changeOtherTeam(arguments[0], arguments[1]);",
-    //                     vec![json!(other_player.0), json!(other_player_team)],
-    //                 )
-    //                 .await;
-
-    //             self.player_data.other_player = other_player.clone();
-    //         }
-    //         self.chat_queue
-    //             .push_back("Type \"!r\" to start the game.".to_string());
-
-    //         self.player_data.pick_progress = 1;
-    //         self.state = RoomState::BeforeGame;
-    //         self.state_changed = Instant::now();
-    //     } else {
-    //         for next_player in &self.player_data.queue {
-    //             let captain = self
-    //                 .player_data
-    //                 .players
-    //                 .iter()
-    //                 .find(|player| player.1.name == next_player.0);
-    //             if let Some(captain) = captain {
-    //                 let mut team = 1;
-    //                 if let Mode::Football = self.room_parameters.mode {
-    //                     self.player_data.team_flip = rand::random();
-    //                     match self.player_data.team_flip {
-    //                         false => team = 3,
-    //                         true => team = 2,
-    //                     }
-    //                 }
-
-    //                 let _ = self
-    //                     .client
-    //                     .execute(
-    //                         "sgrAPI\
-    //                             .toolFunctions\
-    //                             .networkEngine\
-    //                             .changeOtherTeam(arguments[0], arguments[1]);",
-    //                         vec![json!(captain.0), json!(team)],
-    //                     )
-    //                     .await;
-    //                 //Push front because high priority.
-    //                 self.chat_queue.push_front(format!(
-    //                     "{}, pick an opponent with !p <name>.",
-    //                     captain.1.name
-    //                 ));
-    //                 self.player_data.captain = captain.clone();
-
-    //                 self.state = RoomState::BeforeGame;
-    //                 self.player_data.pick_progress = 0;
-    //                 self.state_changed = Instant::now();
-
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // }
-
-    // async fn kick_player(&mut self, player: &(usize, Player)) {
-    //     let _ = self
-    //         .client
-    //         .execute(
-    //             "sgrAPI\
-    //                 .toolFunctions\
-    //                 .networkEngine\
-    //                 .kickPlayer(arguments[0]);",
-    //             vec![json!(player.0)],
-    //         )
-    //         .await;
-
-    //     let index = self
-    //         .player_data
-    //         .queue
-    //         .iter()
-    //         .position(|p| p.0 == player.1.name);
-    //     if let Some(index) = index {
-    //         self.player_data.queue.remove(index);
-    //     }
-    // }
-
-    // async fn all_to_spec(&mut self) {
-    //     let _ = self
-    //         .client
-    //         .execute(
-    //             "sgrAPI\
-    //             .toolFunctions\
-    //             .networkEngine\
-    //             .changeOtherTeam(arguments[0], 0);\
-    //         sgrAPI\
-    //             .toolFunctions\
-    //             .networkEngine\
-    //             .changeOtherTeam(arguments[1], 0);",
-    //             vec![
-    //                 json!(self.player_data.captain.0),
-    //                 json!(self.player_data.other_player.0),
-    //             ],
-    //         )
-    //         .await;
-    // }
-
-    //     async fn update_players_and_chat(
-    //         &mut self,
-    //         chat_next_index: &mut usize,
-    //         chat_checked: &mut Instant,
-    //         message_sent: &mut Instant,
-    //     ) {
-    //         let chat_wait_time = Duration::from_millis(200);
-    //         let spot_hold_time = Duration::from_secs(60);
-    //         let message_rate_limit = Duration::from_secs(3);
-
-    //         if chat_checked.elapsed() >= chat_wait_time {
-    //             let players = self.client.execute("return sgrAPI.players;", vec![]).await;
-    //             if let Ok(players) = players {
-    //                 if let Ok(players) = from_value::<Vec<Option<Player>>>(players) {
-    //                     self.player_data.players = players
-    //                         .into_iter()
-    //                         .enumerate()
-    //                         .filter_map(|player| {
-    //                             if let Some(_player) = player.1 {
-    //                                 return Some((player.0, _player));
-    //                             } else {
-    //                                 return None;
-    //                             }
-    //                         })
-    //                         .collect::<Vec<(usize, Player)>>();
-
-    //                     for player in self.player_data.players.iter() {
-    //                         if let Ok(my_name) = dotenv::var("BONK_USERNAME") {
-    //                             if player.1.name == my_name {
-    //                                 continue;
-    //                             }
-    //                         }
-
-    //                         let queue_spot = self
-    //                             .player_data
-    //                             .queue
-    //                             .iter()
-    //                             .position(|entry| entry.0 == player.1.name);
-    //                         match queue_spot {
-    //                             Some(i) => {
-    //                                 let default = &mut ("".to_string(), Instant::now());
-    //                                 let value = self.player_data.queue.get_mut(i).unwrap_or(default);
-    //                                 value.1 = Instant::now();
-    //                             }
-    //                             None => {
-    //                                 self.player_data
-    //                                     .queue
-    //                                     .push((player.1.name.clone(), Instant::now()));
-    //                             }
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //             self.player_data.queue = self
-    //                 .player_data
-    //                 .queue
-    //                 .drain(..)
-    //                 .filter(|entry| entry.1.elapsed() <= spot_hold_time)
-    //                 .collect();
-
-    //             let chat = self
-    //                 .client
-    //                 .find_all(Locator::Css("#newbonklobby_chat_content > *"))
-    //                 .await;
-    //             if let Ok(chat) = chat {
-    //                 while chat.len() > *chat_next_index {
-    //                     let message = chat.get(*chat_next_index);
-    //                     if let Some(message) = message {
-    //                         let mut name = "".to_string();
-    //                         if let Ok(_name) = message
-    //                             .find(Locator::Css(".newbonklobby_chat_msg_name"))
-    //                             .await
-    //                         {
-    //                             if let Ok(_name) = _name.html(true).await {
-    //                                 name = _name.strip_suffix(": ").unwrap_or(&_name).to_string();
-    //                             }
-    //                         }
-
-    //                         if let Ok(content) = message
-    //                             .find(Locator::Css(".newbonklobby_chat_msg_txt"))
-    //                             .await
-    //                         {
-    //                             if let Ok(content) = content.html(true).await {
-    //                                 self.parse_command(content, name).await;
-    //                             }
-    //                         }
-    //                     }
-
-    //                     *chat_next_index += 1;
-    //                 }
-    //             }
-
-    //             if let RoomState::DuringGame = self.state {
-    //                 if self.state_changed.elapsed() > Duration::from_secs(10) {
-    //                     let finished = self
-    //                         .client
-    //                         .execute(
-    //                             "return document.getElementById('newbonklobby').style.opacity === '1';",
-    //                             vec![],
-    //                         )
-    //                         .await;
-
-    //                     if let Ok(finished) = finished {
-    //                         if let Ok(true) = from_value::<bool>(finished) {
-    //                             self.all_to_spec().await;
-    //                             if let Some(leaderboard_tx) = &self.leaderboard_tx {
-    //                                 if let Mode::Football = self.room_parameters.mode {
-    //                                     let blue_win = self.client.execute("return sgrAPI.footballState.scores[3] === arguments[0];", vec![json!(self.room_parameters.rounds)]).await;
-    //                                     if let Ok(blue_win) = blue_win {
-    //                                         if let Ok(blue_win) = from_value::<bool>(blue_win) {
-    //                                             let (match_string_tx, match_string_rx) =
-    //                                                 oneshot::channel();
-    //                                             let captain = self.player_data.captain.1.name.clone();
-    //                                             let other_player =
-    //                                                 self.player_data.other_player.1.name.clone();
-
-    //                                             _ = leaderboard_tx
-    //                                                 .send(LeaderboardMessage::Update {
-    //                                                     teams: vec![
-    //                                                         vec![if blue_win
-    //                                                             ^ self.player_data.team_flip
-    //                                                         {
-    //                                                             captain.clone()
-    //                                                         } else {
-    //                                                             other_player.clone()
-    //                                                         }],
-    //                                                         vec![if blue_win
-    //                                                             ^ self.player_data.team_flip
-    //                                                         {
-    //                                                             other_player
-    //                                                         } else {
-    //                                                             captain
-    //                                                         }],
-    //                                                     ],
-    //                                                     ties: vec![false],
-    //                                                     match_str: match_string_tx,
-    //                                                 })
-    //                                                 .await;
-
-    //                                             if let Ok(Ok(match_string)) = match_string_rx.await {
-    //                                                 self.chat_queue.push_back(match_string);
-    //                                             }
-    //                                         }
-    //                                     }
-    //                                 }
-    //                             }
-
-    //                             self.state = RoomState::Idle;
-    //                             self.state_changed = Instant::now();
-    //                         }
-    //                     }
-    //                 }
-    //             }
-
-    //             *chat_checked = Instant::now();
-    //         }
-
-    //         if message_sent.elapsed() >= message_rate_limit && self.chat_queue.len() > 0 {
-    //             if let Some(message) = self.chat_queue.pop_front() {
-    //                 let _ = self
-    //                     .client
-    //                     .execute(
-    //                         "sgrAPI.toolFunctions.networkEngine.chatMessage(arguments[0]);",
-    //                         vec![json!(message)],
-    //                     )
-    //                     .await;
-
-    //                 *message_sent = Instant::now();
-    //             }
-    //         }
-    //     }
-
-    //     async fn parse_command(&mut self, command: String, name: String) {
-    //         if let Ok(my_name) = dotenv::var("BONK_USERNAME") {
-    //             if name == my_name {
-    //                 return;
-    //             }
-    //         }
-
-    //         if let Some(command) = command.strip_prefix("!") {
-    //             let mut command: Vec<&str> = command.split(' ').collect();
-
-    //             match command.remove(0) {
-    //                 "help" => self.chat_queue.push_back(
-    //                     "Use !queue to check the queue. Use !ping to ping me. That's all :3"
-    //                         .to_string(),
-    //                 ),
-    //                 "ping" => self.chat_queue.push_back("Pong!".to_string()),
-    //                 "queue" | "q" => self.chat_queue.push_back(
-    //                     self.player_data
-    //                         .queue
-    //                         .iter()
-    //                         .map(|entry| entry.0.clone())
-    //                         .collect::<Vec<String>>()
-    //                         .join(", "),
-    //                 ),
-    //                 "pick" | "p" => bonk_commands::pick(&command, &name, self).await,
-    //                 "ready" | "r" => bonk_commands::ready(&name, self).await,
-    //                 input => self.chat_queue.push_back(format!(
-    //                     "Unknown command \"{}\". Run !help for a list of commands.",
-    //                     input
-    //                 )),
-    //             }
-    //         }
-    //     }
 }
 
 pub fn sec_to_string(time: u64) -> String {
     let mut output = vec![];
     let minutes = time / 60;
     if minutes > 0 {
-        output.push(format!("{} minutes", minutes));
+        output.push(format!(
+            "{} minute{}",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        ));
     }
     let seconds = time % 60;
     if minutes == 0 || seconds > 0 {
-        output.push(format!("{} seconds", seconds));
+        output.push(format!(
+            "{} second{}",
+            seconds,
+            if seconds == 1 { "" } else { "s" }
+        ));
     }
 
     output.join(" and ")

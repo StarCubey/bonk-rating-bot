@@ -108,6 +108,9 @@ pub async fn a(
                     "open" | "o" => admin_commands::open(ctx, interaction, args).await?,
                     "shutdown" | "sd" => admin_commands::shutdown(ctx, interaction, args).await?,
                     "closeall" | "ca" => admin_commands::closeall(ctx, interaction, args).await?,
+                    "forcecloseall" | "fca" => {
+                        admin_commands::forcecloseall(ctx, interaction, args).await?
+                    }
                     _ => {
                         interaction
                             .create_response(

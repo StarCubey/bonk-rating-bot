@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, Context, Result};
 use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction, CreateMessage};
+use tokio::time;
 
 use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
 use crate::DatabaseValue;
@@ -24,6 +27,7 @@ pub async fn admin_help(
                 "**roomlog <get/set/clear>:** Edits the room log channel where room links are posted.\n",
                 "**open, o:** Creates a room from a room config file!\n",
                 "**closeall, ca:** Closes all rooms.\n",
+                "**forcecloseall, fca:** Force closese all rooms.\n",
                 "**shutdown, sd:** Shuts down the bot. This is the reccomended way to do it.\n",
             )),
         )
@@ -612,13 +616,78 @@ pub async fn closeall(
     interaction: &CommandInteraction,
     args: Vec<&str>,
 ) -> Result<()> {
-    if help_check(ctx, interaction, &args, "Closes all rooms.").await? {
+    if help_check(
+        ctx,
+        interaction,
+        &args,
+        "Closes all rooms allowing currently active games to complete.",
+    )
+    .await?
+    {
+        return Ok(());
+    }
+
+    interaction
+        .create_response(&ctx.http, loading_message())
+        .await?;
+
+    let mut data = ctx.data.write().await;
+    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
+        match bonk_bot.close_all().await {
+            Ok(()) => {
+                interaction
+                    .edit_response(&ctx.http, edit_message("Rooms closed!"))
+                    .await?;
+            }
+            Err(e) => {
+                interaction
+                    .edit_response(
+                        &ctx.http,
+                        edit_message(format!("Error while closing rooms: {}", e)),
+                    )
+                    .await?;
+            }
+        }
+    }
+    let db = data.get::<crate::DatabaseKey>().cloned();
+
+    if let Some(db) = db {
+        let channel: Vec<(i64,)> =
+            sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                .fetch_all(db.db.as_ref())
+                .await?;
+
+        if let Some(channel) = channel.get(0) {
+            let channel = ChannelId::new(channel.0 as u64);
+            channel.say(&ctx.http, "All rooms closed!").await?;
+        }
+    }
+
+    Ok(())
+}
+
+pub async fn forcecloseall(
+    ctx: &serenity::all::Context,
+    interaction: &CommandInteraction,
+    args: Vec<&str>,
+) -> Result<()> {
+    if help_check(
+        ctx,
+        interaction,
+        &args,
+        concat!(
+            "Closes all rooms immediately cancelling active games. ",
+            "Unfortunately, this doesn't speed up a \"a closeall\" or \"a shutdown\" that is already running.",
+        )
+    )
+    .await?
+    {
         return Ok(());
     }
 
     let mut data = ctx.data.write().await;
     if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.close_all().await {
+        match bonk_bot.force_close_all().await {
             Ok(()) => {
                 interaction
                     .create_response(&ctx.http, response_message("Rooms closed!"))
@@ -663,7 +732,8 @@ pub async fn shutdown(
         &args,
         concat!(
             "Shuts down the bot. This is the reccomended way to do it. ",
-            "This command does some cleanup. Hopefully, no clients will be leaked."
+            "This command runs \"a closeall\", not \"a forcecloseall\", ",
+            "so it may take time for rooms to close."
         ),
     )
     .await?
@@ -671,13 +741,19 @@ pub async fn shutdown(
         return Ok(());
     }
 
+    interaction
+        .create_response(&ctx.http, loading_message())
+        .await?;
+
     let mut data = ctx.data.write().await;
     if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
         let _ = bonk_bot.close_all().await;
     }
 
+    time::sleep(Duration::from_secs(1)).await;
+
     interaction
-        .create_response(&ctx.http, response_message("Goodbye!"))
+        .edit_response(&ctx.http, edit_message(format!("Goodbye!")))
         .await?;
 
     let db = data.get::<crate::DatabaseKey>().cloned();

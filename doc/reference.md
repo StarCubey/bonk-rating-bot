@@ -38,6 +38,7 @@ leaderboard, lb match_channel <leaderboard abbreviation> <get/set/clear>: Sets t
 roomlog <get/set/clear>: Edits the room log channel where room links are posted.
 open, o: Creates a room from a room config file!
 closeall, ca: Closes all rooms.
+forcecloseall, fca: Force closese all rooms.
 shutdown, sd: Shuts down the bot. This is the reccomended way to do it.
 ```
 
@@ -50,6 +51,7 @@ The "/elo a open" command takes a TOML config file as an argument. Below is an e
 
 name = "Test room"
 max_players = 8
+# min_level = 0 is currently not supported.
 min_level = 1
 # "Football", "Simple", "DeathArrows", "Arrows", "Grapple", "VTOL", "Classic"
 mode = "Classic"
@@ -104,13 +106,12 @@ name = "Classic 1v1"
 abbreviation = "c1"
 # Currently only one algorithm supported.
 algorithm = "OpenSkill"
-# These mean rating and deviation scale values are based on the elo scale.
+# These mean rating and rating scale values are based on the elo scale.
 mean_rating = 1500
-# Rating scale is the deviation of the derivative of the
-# win probability function.
-rating_scale = 315.09
+# Rating scale is how much the base win probability function is stretched horizontally.
+rating_scale = 173.717793
 # The deviation of a new player divided by the rating scale.
-unrated_deviation = 1.1108
+unrated_deviation = 2.014761
 # deviation_per_day^2 * rating_scale^2 is added to the players' deviation^2 (variance) every day.
 # Exact implementation depends on algorithm.
 deviation_per_day = 0.037

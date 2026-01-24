@@ -144,6 +144,13 @@ impl RoomMaker {
                 }
             }
 
+            if message.room_parameters.min_level < 1 {
+                let _ = message
+                    .bonkroom_tx
+                    .send(Err(anyhow!("min_level below 1 isn't supported.")));
+                break;
+            }
+
             let mut i = 0;
             loop {
                 let err;

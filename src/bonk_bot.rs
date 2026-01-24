@@ -4,9 +4,12 @@ pub mod bonk_room;
 pub mod events;
 pub mod room_maker;
 
+use std::time::Duration;
+
 use anyhow::{anyhow, Context, Result};
 use serenity::prelude::TypeMapKey;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::{select, time};
 
 use self::bonk_room::BonkRoomMessage;
 use self::room_maker::{RoomMaker, RoomMakerMessage};
@@ -112,13 +115,45 @@ impl BonkBotValue {
     }
 
     pub async fn close_all(&mut self) -> Result<()> {
+        let bonk_rooms = self.bonk_rooms.lock().await;
+
+        for i in 0..bonk_rooms.len() {
+            bonk_rooms
+                .get(i)
+                .context("Index out of bounds")?
+                .send(BonkRoomMessage::Close)
+                .await?;
+        }
+
+        let bonk_rooms_clone = bonk_rooms.clone();
+        let all_closed = tokio::spawn(async {
+            for room in bonk_rooms_clone {
+                room.closed().await;
+            }
+        });
+
+        let sleep = Box::pin(time::sleep(Duration::from_secs(600)));
+        let result;
+        select! {
+            _ = sleep => result = Err(anyhow!("Rooms force closed due to 10 minute timeout.")),
+            _ = all_closed => result = Ok(()),
+        };
+
+        for room in bonk_rooms.iter() {
+            let _ = room.send(BonkRoomMessage::ForceClose).await;
+        }
+
+        result
+    }
+
+    pub async fn force_close_all(&mut self) -> Result<()> {
         let mut bonk_rooms = self.bonk_rooms.lock().await;
 
         for i in (0..bonk_rooms.len()).rev() {
             bonk_rooms
                 .get(i)
                 .context("Index out of bounds")?
-                .send(BonkRoomMessage::Close)
+                .send(BonkRoomMessage::ForceClose)
                 .await?;
 
             bonk_rooms.pop();
