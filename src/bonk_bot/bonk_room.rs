@@ -49,6 +49,8 @@ pub struct BonkRoom {
     pub map_strikes: Vec<bool>,
     //(id, strikes)
     pub player_strikes: Vec<(i32, u32)>,
+    pub vote_reset: Vec<i32>,
+    pub vote_cancel: Vec<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +155,9 @@ impl BonkRoom {
             team_flip: false,
             player_strikes: vec![],
             map_strikes: vec![],
+            vote_reset: vec![],
+            vote_tie: vec![],
+            vote_cancel: vec![],
         }
     }
 
@@ -269,6 +274,9 @@ impl BonkRoom {
     }
 
     pub async fn reset(&mut self) {
+        self.vote_reset = vec![];
+        self.vote_cancel = vec![];
+
         if self.closing {
             let _ = self
                 .client
@@ -525,7 +533,7 @@ impl BonkRoom {
             }
             if let State::InGame = self.state {
                 if output {
-                    events::on_game_end(self, None).await;
+                    events::on_game_end(self, None, false).await;
                 }
             }
         }

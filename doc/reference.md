@@ -8,6 +8,8 @@
 !queue: Checks the queue. Spots will be held for some time when players leave.
 !pick, !p <name>: When prompted, this command chooses and opponent to play against.
 !ready, !r: Indicaates that you're ready to play before a game.
+!reset: Resets the current round with the same score.
+!cancel, !c: Votes to cancel the game without recording the result.
 ```
 
 ## Discord Base Commands

@@ -4,7 +4,7 @@ use rand::Rng;
 use serde_json::json;
 use tokio::time::{self, Instant};
 
-use crate::bonk_bot::bonk_room::{GamePlayers, State};
+use crate::bonk_bot::bonk_room::{GamePlayers, Player, State};
 
 use super::{bonk_room::BonkRoom, room_maker::Mode};
 
@@ -293,6 +293,82 @@ pub async fn ready(room: &mut BonkRoom, id: i32) {
         let Some(player) = player else { return };
         player.1.ready_cmd = true;
         room.check_ready(true).await;
+    }
+}
+
+pub async fn reset(room: &mut BonkRoom, id: i32) {
+    if room.state != State::GameStarting && room.state != State::InGame {
+        return;
+    }
+
+    let in_game = room.get_in_game();
+    let in_game = in_game
+        .iter()
+        .filter(|p| p.in_room)
+        .collect::<Vec<&Player>>();
+    let is_in_game = in_game.iter().find(|p| p.id == id).is_some();
+    let is_in_vote = room.vote_reset.iter().find(|p| **p == id).is_some();
+
+    if is_in_game && !is_in_vote {
+        room.vote_reset.push(id);
+    }
+
+    if room.vote_reset.len() < in_game.len() {
+        room.chat(format!(
+            "{}/{} players voted for reset.",
+            room.vote_reset.len(),
+            in_game.len()
+        ))
+        .await;
+    } else {
+        if let Mode::Football = room.room_parameters.mode {
+            let _ = room
+                .client
+                .execute(
+                    "sgrAPI.nextScores = sgrAPI.footballState.scores;\
+                    sgrAPI.startGame();",
+                    vec![],
+                )
+                .await;
+        } else {
+            let _ = room
+                .client
+                .execute(
+                    "sgrAPI.nextScores = sgrAPI.state.scores;\
+                    sgrAPI.startGame();",
+                    vec![],
+                )
+                .await;
+        }
+    }
+}
+
+pub async fn cancel(room: &mut BonkRoom, id: i32) {
+    if room.state != State::GameStarting && room.state != State::InGame {
+        return;
+    }
+
+    let in_game = room.get_in_game();
+    let in_game = in_game
+        .iter()
+        .filter(|p| p.in_room)
+        .collect::<Vec<&Player>>();
+    let is_in_game = in_game.iter().find(|p| p.id == id).is_some();
+    let is_in_vote = room.vote_cancel.iter().find(|p| **p == id).is_some();
+
+    if is_in_game && !is_in_vote {
+        room.vote_cancel.push(id);
+    }
+
+    if room.vote_cancel.len() < in_game.len() {
+        room.chat(format!(
+            "{}/{} players voted for cancelling the game.",
+            room.vote_cancel.len(),
+            in_game.len()
+        ))
+        .await;
+    } else {
+        room.reset().await;
     }
 }
 
