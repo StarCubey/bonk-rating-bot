@@ -455,7 +455,7 @@ pub async fn roomlog(
         match option {
             "get" | "g" => {
                 let channel: Vec<(i64,)> =
-                    sqlx::query_as("SELECT id FROM channegls WHERE type = 'room log'")
+                    sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
                         .fetch_all(db.db.as_ref())
                         .await?;
 

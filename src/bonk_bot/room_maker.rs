@@ -433,6 +433,25 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
     //Hopefully fixes problems with team lock failing.
     sleep(Duration::from_millis(500)).await;
 
+    //Wait for gameInfo to load.
+    retry(|| async {
+        let Ok(output) = c
+            .execute("return sgrAPI.gameInfo !== undefined;", vec![])
+            .await
+        else {
+            return Err(anyhow!("Failed to check gameInfo."));
+        };
+        let Ok(output) = serde_json::from_value::<bool>(output) else {
+            return Err(anyhow!("Failed to check gameInfo."));
+        };
+
+        if output {
+            Ok(())
+        } else {
+            Err(anyhow!("gameInfo is undefined."))
+        }
+    })
+    .await?;
     c.execute(
         "sgrAPI.setMode(arguments[0]);\
         sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
