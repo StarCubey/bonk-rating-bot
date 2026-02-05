@@ -317,6 +317,7 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                 match command.remove(0) {
                     "help" | "h" | "?" => room.chat(help_string).await,
                     "ping" => room.chat("Pong!".to_string()).await,
+                    "discord" | "d" => bonk_commands::discord(room).await,
                     "queue" | "q" => {
                         room.chat(format!(
                             "{}",
@@ -332,8 +333,7 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                     "pick" | "p" => bonk_commands::pick(room, id, command.join(" ")).await,
                     "strike" | "s" => bonk_commands::strike(room, id).await,
                     "ready" | "r" => bonk_commands::ready(room, id).await,
-                    "reset" => bonk_commands::reset(room, id).await,
-                    "tie" | "t" => bonk_commands::tie(room, id).await,
+                    "reset" | "re" => bonk_commands::reset(room, id).await,
                     "cancel" | "c" => bonk_commands::cancel(room, id).await,
                     _ => room.chat(help_string).await,
                 }

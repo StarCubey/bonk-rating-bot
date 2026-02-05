@@ -8,6 +8,13 @@ use crate::bonk_bot::bonk_room::{GamePlayers, Player, State};
 
 use super::{bonk_room::BonkRoom, room_maker::Mode};
 
+pub async fn discord(room: &mut BonkRoom) {
+    let Ok(response) = dotenv::var("DISCORD_SERVER_LINK") else {
+        return;
+    };
+    room.chat(response).await;
+}
+
 pub async fn pick(room: &mut BonkRoom, id: i32, name: String) {
     let State::Pick = room.state else {
         return;

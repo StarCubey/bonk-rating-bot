@@ -342,8 +342,9 @@ pub fn match_string(
                 team.iter()
                     .map(|player| {
                         format!(
-                            "{} ({:.0} 🡢 {:.0})",
-                            player.name, player.old_rating, player.display_rating
+                            "{} {}",
+                            player.name,
+                            rating_string(player.display_rating, player.old_rating),
                         )
                     })
                     .collect::<Vec<String>>()
@@ -368,10 +369,9 @@ pub fn match_string(
                 .filter_map(|player| player)
                 .map(|player| {
                     format!(
-                        "{} ({:.0} 🡢 {:.0})",
+                        "{} {}",
                         escaped(&player.name),
-                        player.old_rating,
-                        player.display_rating
+                        rating_string(player.display_rating, player.old_rating),
                     )
                 })
                 .collect::<Vec<String>>()
@@ -386,10 +386,9 @@ pub fn match_string(
                     team.iter()
                         .map(|player| {
                             format!(
-                                "{} ({:.0} 🡢 {:.0})",
+                                "{} {}",
                                 escaped(&player.name),
-                                player.old_rating,
-                                player.display_rating
+                                rating_string(player.display_rating, player.old_rating)
                             )
                         })
                         .collect::<Vec<String>>()
@@ -405,8 +404,9 @@ pub fn match_string(
                 team.iter()
                     .map(|player| {
                         format!(
-                            "{} ({:.0} 🡢 {:.0})",
-                            player.name, player.old_rating, player.display_rating
+                            "{} {}",
+                            player.name,
+                            rating_string(player.display_rating, player.old_rating),
                         )
                     })
                     .collect::<Vec<String>>()
@@ -446,19 +446,17 @@ pub fn match_string(
                             game += "Winner: "
                         }
                         game += &format!(
-                            "{} ({:.0} 🡢 {:.0})\n",
+                            "{} {}\n",
                             escaped(&winner.name),
-                            winner.old_rating,
-                            winner.display_rating
+                            rating_string(winner.display_rating, winner.old_rating),
                         );
                         if let Some(false) | None = ties.get(0) {
                             game += "Loser: "
                         }
                         game += &format!(
-                            "{} ({:.0} 🡢 {:.0})",
+                            "{} {}",
                             escaped(&loser.name),
-                            loser.old_rating,
-                            loser.display_rating
+                            rating_string(loser.display_rating, loser.old_rating),
                         );
                     }
                 }
@@ -478,10 +476,9 @@ pub fn match_string(
                         .iter()
                         .map(|player| {
                             format!(
-                                "{} ({:.0} 🡢 {:.0})",
+                                "{} {}",
                                 escaped(&player.name),
-                                player.old_rating,
-                                player.display_rating
+                                rating_string(player.display_rating, player.old_rating),
                             )
                         })
                         .collect::<Vec<String>>()
@@ -495,10 +492,9 @@ pub fn match_string(
                         .iter()
                         .map(|player| {
                             format!(
-                                "{} ({:.0} 🡢 {:.0})",
+                                "{} {}",
                                 escaped(&player.name),
-                                player.old_rating,
-                                player.display_rating
+                                rating_string(player.display_rating, player.old_rating),
                             )
                         })
                         .collect::<Vec<String>>()
@@ -520,11 +516,10 @@ pub fn match_string(
                             last_placement = placement.clone();
 
                             Some(format!(
-                                "{}: {} ({:.0} 🡢 {:.0})",
+                                "{}: {} {}",
                                 placement,
                                 escaped(&player.name),
-                                player.old_rating,
-                                player.display_rating
+                                rating_string(player.display_rating, player.old_rating),
                             ))
                         } else {
                             return None;
@@ -552,10 +547,9 @@ pub fn match_string(
                                 .iter()
                                 .map(|player| {
                                     format!(
-                                        "{} ({:.0} 🡢 {:.0})",
+                                        "{} {}",
                                         escaped(&player.name),
-                                        player.old_rating,
-                                        player.display_rating
+                                        rating_string(player.display_rating, player.old_rating),
                                     )
                                 })
                                 .collect::<Vec<String>>()
@@ -568,6 +562,18 @@ pub fn match_string(
     }
 
     (game, summary)
+}
+
+fn rating_string(new: f64, old: f64) -> String {
+    let new = new.round();
+    let old = old.round();
+
+    format!(
+        "({}, {}{})",
+        new,
+        if new >= old { "+" } else { "" },
+        new - old
+    )
 }
 
 fn escaped(str: &String) -> String {

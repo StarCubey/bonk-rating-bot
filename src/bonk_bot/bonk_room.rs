@@ -156,7 +156,6 @@ impl BonkRoom {
             player_strikes: vec![],
             map_strikes: vec![],
             vote_reset: vec![],
-            vote_tie: vec![],
             vote_cancel: vec![],
         }
     }

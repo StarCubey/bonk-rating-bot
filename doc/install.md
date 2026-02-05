@@ -33,6 +33,8 @@ Go to "Bot" and generate a token which will need to be stored in the DISCORD_TOK
 
 Then, you need to set the DISCORD_USER_ID environment variable to your user id to ensure that you have bot admin permissions. You can get your user id by going to User Settings > Advanced under the App Settings heading and enabling Developer Mode. Then you can press Copy User ID from your profile.
 
+The DISCORD_SERVER_LINK is just the bot's response when someone runs !discord. It can be set to a server's permentant invite link.
+
 ## PostgreSQL
 
 Start by installing PostgreSQL. on debian based distros, it can be installed like so:
@@ -53,8 +55,8 @@ BONK_USERNAME=
 BONK_PASSWORD=
 DISCORD_TOKEN=
 DISCORD_USER_ID=
+DISCORD_SERVER_LINK=
 CHROME_PATH=
 CHROMEDRIVER_PORT=
 DATABASE_URL=
-DISCORD_USER_ID=
 ```
