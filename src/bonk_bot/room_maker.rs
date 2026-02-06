@@ -124,14 +124,24 @@ pub enum Queue {
 pub struct RoomMaker {
     rx: mpsc::Receiver<RoomMakerMessage>,
     last_room_time: Option<Instant>,
+    mods: String,
 }
 
 impl RoomMaker {
-    pub fn new(rx: mpsc::Receiver<RoomMakerMessage>) -> RoomMaker {
-        RoomMaker {
+    pub async fn new(rx: mpsc::Receiver<RoomMakerMessage>) -> Result<RoomMaker> {
+        let mut sgr_api_file = File::open("dependencies/sgrAPI.user.js").await?;
+        let mut sgr_api = String::new();
+        sgr_api_file.read_to_string(&mut sgr_api).await?;
+
+        let mut injector_file = File::open("dependencies/Code Injector - Bonk.io.user.js").await?;
+        let mut injector = String::new();
+        injector_file.read_to_string(&mut injector).await?;
+
+        Ok(RoomMaker {
             rx,
             last_room_time: None,
-        }
+            mods: format!("{}{}", injector, sgr_api),
+        })
     }
 
     pub async fn run(&mut self) {
@@ -156,7 +166,7 @@ impl RoomMaker {
                 let err;
                 match make_client(message.room_parameters.headless).await {
                     Ok(c) => {
-                        match make_room(&c, &mut message.room_parameters).await {
+                        match make_room(&c, &mut message.room_parameters, &self.mods).await {
                             Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
                                 let mut bonkroom = BonkRoom::new(
@@ -243,7 +253,11 @@ async fn make_client(headless: bool) -> Result<fantoccini::Client> {
 }
 
 ///Returns room link.
-async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters) -> Result<String> {
+async fn make_room(
+    c: &fantoccini::Client,
+    room_parameters: &mut RoomParameters,
+    mods: &String,
+) -> Result<String> {
     let credentials = vec![json!({
         "username": dotenv::var("BONK_USERNAME")?,
         "password": dotenv::var("BONK_PASSWORD")?,
@@ -279,14 +293,6 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
         teams = false;
     }
 
-    let mut sgr_api_file = File::open("dependencies/sgrAPI.user.js").await?;
-    let mut sgr_api = String::new();
-    sgr_api_file.read_to_string(&mut sgr_api).await?;
-
-    let mut injector_file = File::open("dependencies/Code Injector - Bonk.io.user.js").await?;
-    let mut injector = String::new();
-    injector_file.read_to_string(&mut injector).await?;
-
     c.goto("https://bonk.io/").await?;
 
     //I tried decreasing the retry time, but it broke, so I'm just not going to question it.
@@ -298,8 +304,7 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
         .enter_frame()
         .await?;
 
-    c.execute(&sgr_api, vec![]).await?;
-    c.execute(&injector, vec![]).await?;
+    c.execute(&mods, vec![]).await?;
 
     let account_button =
         wait_for_element(&c, Locator::Id("guestOrAccountContainer_accountButton")).await?;
@@ -434,24 +439,24 @@ async fn make_room(c: &fantoccini::Client, room_parameters: &mut RoomParameters)
     sleep(Duration::from_millis(500)).await;
 
     //Wait for gameInfo to load.
-    retry(|| async {
-        let Ok(output) = c
-            .execute("return sgrAPI.gameInfo !== undefined;", vec![])
-            .await
-        else {
-            return Err(anyhow!("Failed to check gameInfo."));
-        };
-        let Ok(output) = serde_json::from_value::<bool>(output) else {
-            return Err(anyhow!("Failed to check gameInfo."));
-        };
+    // retry(|| async {
+    //     let Ok(output) = c
+    //         .execute("return sgrAPI.gameInfo !== undefined;", vec![])
+    //         .await
+    //     else {
+    //         return Err(anyhow!("Failed to check gameInfo."));
+    //     };
+    //     let Ok(output) = serde_json::from_value::<bool>(output) else {
+    //         return Err(anyhow!("Failed to check gameInfo."));
+    //     };
 
-        if output {
-            Ok(())
-        } else {
-            Err(anyhow!("gameInfo is undefined."))
-        }
-    })
-    .await?;
+    //     if output {
+    //         Ok(())
+    //     } else {
+    //         Err(anyhow!("gameInfo is undefined."))
+    //     }
+    // })
+    // .await?;
     c.execute(
         "sgrAPI.setMode(arguments[0]);\
         sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\

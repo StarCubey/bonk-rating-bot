@@ -83,7 +83,7 @@ impl EventHandler for Handler {
 
         let mut data = ctx.data.write().await;
 
-        data.insert::<BonkBotKey>(BonkBotValue::new());
+        data.insert::<BonkBotKey>(BonkBotValue::new().await);
 
         let db = sqlx::postgres::PgPool::connect(
             &dotenv::var("DATABASE_URL").expect("Missing database URL."),

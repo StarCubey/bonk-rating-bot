@@ -28,9 +28,12 @@ pub struct BonkBotValue {
 }
 
 impl BonkBotValue {
-    pub fn new() -> BonkBotValue {
+    ///Panics
+    pub async fn new() -> BonkBotValue {
         let (roommaker_tx, roommaker_receiver) = mpsc::channel(3);
-        let mut roommaker = RoomMaker::new(roommaker_receiver);
+        let mut roommaker = RoomMaker::new(roommaker_receiver)
+            .await
+            .expect("Failed to initialize room maker.");
         tokio::spawn(async move {
             roommaker.run().await;
         });
