@@ -124,6 +124,7 @@ pub enum Queue {
 pub struct RoomMaker {
     rx: mpsc::Receiver<RoomMakerMessage>,
     last_room_time: Option<Instant>,
+    injector: String,
     mods: String,
 }
 
@@ -133,14 +134,15 @@ impl RoomMaker {
         let mut sgr_api = String::new();
         sgr_api_file.read_to_string(&mut sgr_api).await?;
 
-        let mut injector_file = File::open("dependencies/Code Injector - Bonk.io.user.js").await?;
+        let mut injector_file = File::open("dependencies/CondensedInjector.js").await?;
         let mut injector = String::new();
         injector_file.read_to_string(&mut injector).await?;
 
         Ok(RoomMaker {
             rx,
             last_room_time: None,
-            mods: format!("{}{}", injector, sgr_api),
+            injector: injector,
+            mods: sgr_api,
         })
     }
 
@@ -166,7 +168,14 @@ impl RoomMaker {
                 let err;
                 match make_client(message.room_parameters.headless).await {
                     Ok(c) => {
-                        match make_room(&c, &mut message.room_parameters, &self.mods).await {
+                        match make_room(
+                            &c,
+                            &mut message.room_parameters,
+                            &self.injector,
+                            &self.mods,
+                        )
+                        .await
+                        {
                             Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
                                 let mut bonkroom = BonkRoom::new(
@@ -256,6 +265,7 @@ async fn make_client(headless: bool) -> Result<fantoccini::Client> {
 async fn make_room(
     c: &fantoccini::Client,
     room_parameters: &mut RoomParameters,
+    injector: &String,
     mods: &String,
 ) -> Result<String> {
     let credentials = vec![json!({
@@ -303,7 +313,7 @@ async fn make_room(
         .await?
         .enter_frame()
         .await?;
-
+    c.execute(&injector, vec![]).await?;
     c.execute(&mods, vec![]).await?;
 
     let account_button =

@@ -347,6 +347,8 @@ pub async fn reset(room: &mut BonkRoom, id: i32) {
                 )
                 .await;
         }
+
+        room.vote_reset = vec![];
     }
 }
 

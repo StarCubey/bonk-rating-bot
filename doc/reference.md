@@ -17,8 +17,6 @@
 All commands start with /elo with the command written in the command field.
 
 ```
-A single slash command for all of your sgrBot needs!
-
 Commands:
 help, h: The help menu that you're currently reading.
 ping: Pong!

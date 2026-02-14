@@ -83,6 +83,10 @@ This is bonk host freejoin. This moves a player into a game so that they appear 
 
 window.sgrAPI = {};
 
+//You can wait for the script to be injected with: await sgrAPI.injected;
+window.sgrAPI.injectedResolve;
+window.sgrAPI.injected = new Promise(res => sgrAPI.injectedResolve = () => res());
+
 window.sgrAPI.startGame = () => {
   for(let callback of Object.keys(window.sgrAPI.bonkCallbacks)) {
     	window.sgrAPI.bonkCallbacks[callback]("startGame");
@@ -160,6 +164,27 @@ window.sgrAPI.fav = async id => {
 
     console.log("Failed to favorite map:" + e);
   });
+};
+
+// Gets map array from playlist string (from Salama's playlist mod) assuming maps are favorited.
+// https://greasyfork.org/en/scripts/439123-bonk-playlists
+window.sgrAPI.fromPlaylist = async (playlist) => {
+  playlist = JSON.parse(playlist);
+  let bonk2MapIds = playlist.map(p => p.maps).flat();
+  let bonk1Maps = playlist.map(p => p.b1maps).flat();
+
+  let foundMaps = [];
+  for(i = 0; foundMaps.length < bonk2MapIds.length; i++) {
+    let maps = (await sgrAPI.getFav(i)).maps;
+    if(!maps || maps.length === 0) break;
+    for(map of maps) {
+      if(bonk2MapIds.find(id => id === map.id) !== undefined) {
+        foundMaps.push(map);
+      }
+    }
+  }
+
+  return [foundMaps, bonk1Maps].flat();
 };
 
 // Left = 37, Up = 38, Right = 39, Down = 40, X = 88, Z = 90
@@ -244,6 +269,34 @@ sgrAPI.onPost = (url, input) => {
   };
 };
 */
+
+//Makes a room and returns the room link.
+window.sgrAPI.makeRoom = async (name, password, maxPlayers, minLevel, maxLevel, unlisted) => {
+  await sgrAPI.domContentLoaded;
+  while(true) {
+    document.getElementById("roomlistrefreshbutton").click();
+    document.getElementById("roomlistcreatewindowgamename").value = name;
+    document.getElementById("roomlistcreatewindowpassword").value = password;
+    document.getElementById("roomlistcreatewindowmaxplayers").value = maxPlayers;
+    document.getElementById("roomlistcreatewindowminlevel").value = minLevel;
+    document.getElementById("roomlistcreatewindowmaxlevel").value = maxLevel;
+    document.getElementById("roomlistcreatewindowunlistedcheckbox").checked = unlisted;
+    document.getElementById("roomlistcreatecreatebutton").click();
+    await new Promise(result => setTimeout(result, 500));
+    let connectStr = document.getElementById("sm_connectingWindow_text").innerText;
+    let connectVisibility = document.getElementById("sm_connectingContainer").style.visibility;
+    if(connectStr !== "Creating room...\nConnect error" && connectVisibility !== "hidden" && connectVisibility !== "") {
+      while(true) {
+        document.getElementById("newbonklobby_linkbutton").click();
+        await new Promise(result => setTimeout(result, 500));
+        let messages = document.getElementById("newbonklobby_chat_content").children;
+        if(messages.length > 2) {
+          return messages[messages.length-1].innerText.slice(2);
+        }
+      }
+    }
+  }
+}
 
 // Joins room with a blank skin without updating UI or game state.
 window.sgrAPI.shadowJoinRoom = async url => {
@@ -386,6 +439,7 @@ window.bonkCodeInjectors.push((code) => {
     "window.sgrAPI.players = arguments[1]; newbonklobby_votewindow_close",
   );
 
+  sgrAPI.injectedResolve();
   console.log("sgrAPI run");
   return code;
 });
@@ -416,7 +470,11 @@ window.WebSocket.prototype.send = function(args) {
 
 window.sgrAPI.token = null;
 window.sgrAPI.oldPost = () => {};
+window.sgrAPI.domContentLoadedResolve;
+window.sgrAPI.domContentLoaded = new Promise(res => sgrAPI.domContentLoadedResolve = () => res());
 document.addEventListener("DOMContentLoaded", () => {
+  sgrAPI.domContentLoadedResolve();
+
   let olderPost = $.post;
   sgrAPI.oldPost = function() {
     return olderPost.call($, ...arguments).then((output, status) => {

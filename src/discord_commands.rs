@@ -31,7 +31,6 @@ pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction
             &ctx.http,
             response_message(
                 concat!(
-                    "A single slash command for all of your sgrBot needs!\n\n",
                     "__Commands:__\n",
                     "**help, h:** The help menu that you're currently reading.\n",
                     "**ping:** Pong!",

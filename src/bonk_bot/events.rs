@@ -120,7 +120,7 @@ async fn transition_idle(room: &mut BonkRoom) {
                 room.warning_step = 0;
                 room.state = State::Pick;
                 room.chat(format!(
-                    "{}, pick an opponent with !p <abbreviation>",
+                    "{}, pick an opponent with !p abbreviation",
                     picker.name
                 ))
                 .await;
@@ -305,16 +305,26 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
 
             let message = message.strip_prefix(&num_string).unwrap_or(message);
             let message = message.strip_prefix(",\"").unwrap_or(message);
-            let chat_message = message.strip_suffix("\"]").unwrap_or(message);
+            let mut chat_message = message.strip_suffix("\"]").unwrap_or(message);
+
+            let new_message;
+            if let Some(command) = chat_message.strip_prefix("|") {
+                new_message = format!("{}{}", "!", command);
+                chat_message = new_message.as_str();
+            }
 
             if let Some(command) = chat_message.strip_prefix("!") {
                 let mut command: Vec<&str> = command.split(' ').collect();
 
-                let help_string = "!queue (lists the queue)".to_string();
+                let help_string = concat!(
+                    "!discord, !queue (lists the queue), ",
+                    "!reset (votes to reset game with same score), !cancel (votes to cancel game)"
+                )
+                .to_string();
                 if command.len() == 0 {
                     return;
                 }
-                match command.remove(0) {
+                match command.remove(0).to_lowercase().as_str() {
                     "help" | "h" | "?" => room.chat(help_string).await,
                     "ping" => room.chat("Pong!".to_string()).await,
                     "discord" | "d" => bonk_commands::discord(room).await,
