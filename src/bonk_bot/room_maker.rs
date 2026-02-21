@@ -1,14 +1,16 @@
 use anyhow::Context;
 use anyhow::{anyhow, Result};
-use fantoccini::error::CmdError;
-use fantoccini::{ClientBuilder, Locator};
+use fantoccini::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use serenity::all::Http;
+use serenity::prelude::TypeMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::oneshot;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::{sleep, Instant};
 
 use crate::leaderboard::LeaderboardMessage;
@@ -16,6 +18,8 @@ use crate::leaderboard::LeaderboardMessage;
 use super::bonk_room::{BonkRoom, BonkRoomMessage};
 
 pub struct RoomMakerMessage {
+    pub http: Arc<Http>,
+    pub data: Arc<RwLock<TypeMap>>,
     pub bonkroom_tx: oneshot::Sender<Result<CreationReply>>,
     pub leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
     pub room_parameters: RoomParameters,
@@ -81,7 +85,7 @@ fn ffa_max_default() -> usize {
     7
 }
 fn idle_time_default() -> u64 {
-    5
+    0
 }
 fn pick_time_default() -> u64 {
     60
@@ -124,7 +128,6 @@ pub enum Queue {
 pub struct RoomMaker {
     rx: mpsc::Receiver<RoomMakerMessage>,
     last_room_time: Option<Instant>,
-    injector: String,
     mods: String,
 }
 
@@ -134,15 +137,14 @@ impl RoomMaker {
         let mut sgr_api = String::new();
         sgr_api_file.read_to_string(&mut sgr_api).await?;
 
-        let mut injector_file = File::open("dependencies/CondensedInjector.js").await?;
+        let mut injector_file = File::open("dependencies/sgrInjector.user.js").await?;
         let mut injector = String::new();
         injector_file.read_to_string(&mut injector).await?;
 
         Ok(RoomMaker {
             rx,
             last_room_time: None,
-            injector: injector,
-            mods: sgr_api,
+            mods: format!("{}{}", injector, sgr_api),
         })
     }
 
@@ -168,17 +170,13 @@ impl RoomMaker {
                 let err;
                 match make_client(message.room_parameters.headless).await {
                     Ok(c) => {
-                        match make_room(
-                            &c,
-                            &mut message.room_parameters,
-                            &self.injector,
-                            &self.mods,
-                        )
-                        .await
-                        {
+                        match make_room(&c, &mut message.room_parameters, &self.mods).await {
                             Ok(room_link) => {
                                 let (tx, rx) = mpsc::channel(10);
                                 let mut bonkroom = BonkRoom::new(
+                                    room_link.clone(),
+                                    message.http,
+                                    message.data,
                                     rx,
                                     c,
                                     message.leaderboard_tx,
@@ -222,7 +220,7 @@ async fn make_client(headless: bool) -> Result<fantoccini::Client> {
 
     let capabilities_headless = json!({
         "moz:firefoxOptions": {
-            "args": ["--headless", "--mute-audio", "--width=1920", "--height=1080"]
+            "args": ["--headless", "--mute-audio", "--width=1280", "--height=720"]
         },
         "goog:chromeOptions": {
             "binary": dotenv::var("CHROME_PATH")?,
@@ -265,26 +263,20 @@ async fn make_client(headless: bool) -> Result<fantoccini::Client> {
 async fn make_room(
     c: &fantoccini::Client,
     room_parameters: &mut RoomParameters,
-    injector: &String,
     mods: &String,
 ) -> Result<String> {
-    let credentials = vec![json!({
-        "username": dotenv::var("BONK_USERNAME")?,
-        "password": dotenv::var("BONK_PASSWORD")?,
-    })];
-
     //Force no guests for leaderboard rooms.
     if room_parameters.leaderboard.is_some() && room_parameters.min_level < 1 {
         room_parameters.min_level = 1;
     }
-    let room_info = vec![json!({
-        "roomName": room_parameters.name,
-        "roomPass": room_parameters.password.clone(),
-        "maxPlayers": room_parameters.max_players,
-        "minLevel": room_parameters.min_level,
-        "unlisted": room_parameters.unlisted,
-    })];
 
+    let mut teams = false;
+    if let Queue::Teams = &room_parameters.queue {
+        teams = true;
+    }
+    if let Mode::Football = &room_parameters.mode {
+        teams = false;
+    }
     let mode = match &room_parameters.mode {
         Mode::Football => "f",
         Mode::Simple => "bs",
@@ -294,28 +286,169 @@ async fn make_room(
         Mode::VTOL => "v",
         Mode::Classic => "b",
     };
+    let credentials = vec![json!({
+        "username": dotenv::var("BONK_USERNAME")?,
+        "password": dotenv::var("BONK_PASSWORD")?,
+    })];
+    let room_data = vec![json!({
+        "roomName": room_parameters.name,
+        "roomPass": room_parameters.password.clone(),
+        "maxPlayers": room_parameters.max_players,
+        "minLevel": room_parameters.min_level,
+        "unlisted": room_parameters.unlisted,
+        "teams": teams,
+        "mode": mode,
+        "rounds": room_parameters.rounds,
+    })];
 
-    let mut teams = false;
-    if let Queue::Teams = &room_parameters.queue {
-        teams = true;
+    println!("Opening bonk.io...");
+
+    c.goto("https://bonk.io/sgr").await?;
+
+    println!("Loading mods...");
+
+    c.execute(
+        &format!(
+            "{}{}{}{}",
+            "window.done = new Promise(async resolve => {",
+            mods,
+            "await window.sgrAPIFunctionsLoaded;",
+            "resolve();});",
+        ),
+        vec![],
+    )
+    .await?;
+    let mut success = false;
+    for _ in 0..5 {
+        if let Ok(_) = c.execute("await window.done;", vec![]).await {
+            success = true;
+            break;
+        }
     }
-    if let Mode::Football = &room_parameters.mode {
-        teams = false;
+    if !success {
+        return Err(anyhow!("Timeout on loading mods."));
     }
 
-    c.goto("https://bonk.io/").await?;
+    println!("Logging in...");
+
+    c.execute(
+        &format!(
+            "{}",
+            "let credentials = arguments[0];\
+            window.done = new Promise(async resolve => {;\
+                await sgrAPI.logIn(credentials.username, credentials.password);\
+            resolve();});"
+        ),
+        credentials,
+    )
+    .await?;
+    let mut success = false;
+    for _ in 0..5 {
+        if let Ok(_) = c.execute("await window.done;", vec![]).await {
+            success = true;
+            break;
+        }
+    }
+    if !success {
+        return Err(anyhow!("Timeout on logging in."));
+    }
+
+    println!("Creating room...");
+
+    c.execute(
+        &format!(
+            "{}",
+            "let data = arguments[0];\
+            window.done = new Promise(async resolve => {\
+                let roomLink = await sgrAPI.makeRoom(\
+                    data.roomName,\
+                    data.roomPass,\
+                    data.maxPlayers,\
+                    data.minLevel,\
+                    999,\
+                    data.unlisted,\
+                );\
+                sgrAPI.setTeams(data.teams);
+                sgrAPI.setMode(data.mode);
+                sgrAPI.gameInfo[2].wl = data.rounds;
+                sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
+                sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
+                sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
+                window.messageBuffer = [];\
+                sgrAPI.onReceive = message => {\
+                    window.messageBuffer.push(message);return true;\
+                };\
+                window.gameFrame = await window.gameFrame;\
+                window.gdoc = gameFrame.contentDocument;\
+            resolve(roomLink);});",
+        ),
+        room_data,
+    )
+    .await?;
+
+    let mut room_link = "".to_string();
+    let mut success = false;
+    for _ in 0..5 {
+        if let Ok(output) = c.execute("return await window.done;", vec![]).await {
+            success = true;
+            room_link = serde_json::from_value(output)?;
+            break;
+        }
+    }
+    if !success {
+        return Err(anyhow!("Timeout on room creation."));
+    }
+
+    /*
+    let room_link = c
+        .execute(
+            &format!(
+                "{}{}",
+                &mods,
+                "\
+                let data = arguments[0];\
+                await window.sgrAPIFunctionsLoaded;\
+                await sgrAPI.logIn(data.username, data.password);\
+                let roomLink = await sgrAPI.makeRoom(\
+                    data.roomName,\
+                    data.roomPass,\
+                    data.maxPlayers,\
+                    data.minLevel,\
+                    999,\
+                    data.unlisted,\
+                );\
+                sgrAPI.setTeams(data.teams);
+                sgrAPI.setMode(data.mode);
+                sgrAPI.gameInfo[2].wl = data.rounds;
+                sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
+                sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
+                sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
+                window.messageBuffer = [];\
+                // sgrAPI.onReceive = message => {\
+                    window.messageBuffer.push(message);return true;\
+                };\
+                window.gameFrame = await window.gameFrame;\
+                window.gdoc = gameFrame.contentDocument;\
+                return roomLink;\
+                "
+            ),
+            room_data,
+        )
+        .await?;
+
+    let room_link = serde_json::from_value(room_link)?;
+    */
 
     //I tried decreasing the retry time, but it broke, so I'm just not going to question it.
-    c.wait()
-        .at_most(Duration::from_secs(5))
-        .every(Duration::from_millis(250))
-        .for_element(Locator::Id("maingameframe"))
-        .await?
-        .enter_frame()
-        .await?;
-    c.execute(&injector, vec![]).await?;
-    c.execute(&mods, vec![]).await?;
+    // c.wait()
+    //     .at_most(Duration::from_secs(5))
+    //     .every(Duration::from_millis(250))
+    //     .for_element(Locator::Id("maingameframe"))
+    //     .await?
+    //     .enter_frame()
+    //     .await?;
 
+    /*
     let account_button =
         wait_for_element(&c, Locator::Id("guestOrAccountContainer_accountButton")).await?;
 
@@ -467,17 +600,18 @@ async fn make_room(
     //     }
     // })
     // .await?;
-    c.execute(
-        "sgrAPI.setMode(arguments[0]);\
-        sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
-        sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
-        sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
-        if(arguments[1]) sgrAPI.setTeams(true);\
-        window.messageBuffer = [];\
-        sgrAPI.onReceive = message => {window.messageBuffer.push(message);return true;};",
-        vec![json!(mode), json!(teams)],
-    )
-    .await?;
+    */
+    // c.execute(
+    //     "sgrAPI.setMode(arguments[0]);\
+    //     sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
+    //     sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
+    //     sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
+    //     if(arguments[1]) sgrAPI.setTeams(true);\
+    //     window.messageBuffer = [];\
+    //     sgrAPI.onReceive = message => {window.messageBuffer.push(message);return true;};",
+    //     vec![json!(mode), json!(teams)],
+    // )
+    // .await?;
 
     if let Some(map) = room_parameters.maps.get(0) {
         let _ = c
@@ -509,36 +643,36 @@ async fn make_room(
     Ok(room_link)
 }
 
-async fn wait_for_element(
-    client: &fantoccini::Client,
-    locator: Locator<'_>,
-) -> Result<fantoccini::elements::Element, CmdError> {
-    client
-        .wait()
-        .at_most(Duration::from_secs(10))
-        .every(Duration::from_millis(250))
-        .for_element(locator)
-        .await
-}
+// async fn wait_for_element(
+//     client: &fantoccini::Client,
+//     locator: Locator<'_>,
+// ) -> Result<fantoccini::elements::Element, CmdError> {
+//     client
+//         .wait()
+//         .at_most(Duration::from_secs(10))
+//         .every(Duration::from_millis(250))
+//         .for_element(locator)
+//         .await
+// }
 
-async fn retry<F, Fut, T, E>(mut operation: F) -> Result<T, E>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, E>>,
-{
-    let start = Instant::now();
-    let max_duration = Duration::from_secs(10);
-    let interval = Duration::from_millis(250);
+// async fn retry<F, Fut, T, E>(mut operation: F) -> Result<T, E>
+// where
+//     F: FnMut() -> Fut,
+//     Fut: std::future::Future<Output = Result<T, E>>,
+// {
+//     let start = Instant::now();
+//     let max_duration = Duration::from_secs(10);
+//     let interval = Duration::from_millis(250);
 
-    loop {
-        match operation().await {
-            Ok(res) => return Ok(res),
-            Err(e) => {
-                if start.elapsed() >= max_duration {
-                    return Err(e);
-                }
-                sleep(interval).await;
-            }
-        }
-    }
-}
+//     loop {
+//         match operation().await {
+//             Ok(res) => return Ok(res),
+//             Err(e) => {
+//                 if start.elapsed() >= max_duration {
+//                     return Err(e);
+//                 }
+//                 sleep(interval).await;
+//             }
+//         }
+//     }
+// }

@@ -1,12 +1,20 @@
+use anyhow::Context;
+use serenity::all::ChannelId;
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
+use tokio::time::sleep;
 
+use anyhow::Result;
 use rand::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::from_value;
 use serde_json::json;
+use serenity::all::Http;
+use serenity::prelude::TypeMap;
 use tokio::select;
 use tokio::time::Interval;
 use tokio::time::Sleep;
@@ -18,6 +26,8 @@ use tokio::{
 use crate::bonk_bot::events;
 use crate::bonk_bot::room_maker;
 use crate::bonk_bot::room_maker::Mode;
+use crate::bonk_bot::room_maker::Queue;
+use crate::bonk_bot::BonkBotKey;
 use crate::leaderboard::LeaderboardMessage;
 
 //use super::bonk_commands;
@@ -30,6 +40,9 @@ pub enum BonkRoomMessage {
 }
 
 pub struct BonkRoom {
+    pub link: String,
+    pub http: Arc<Http>,
+    pub data: Arc<RwLock<TypeMap>>,
     pub rx: mpsc::Receiver<BonkRoomMessage>,
     pub client: fantoccini::Client,
     pub leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
@@ -107,6 +120,9 @@ impl Player {
 impl BonkRoom {
     ///Creates BonkRoom instance and starts intervals and timers.
     pub fn new(
+        link: String,
+        http: Arc<Http>,
+        data: Arc<RwLock<TypeMap>>,
         rx: mpsc::Receiver<BonkRoomMessage>,
         client: fantoccini::Client,
         leaderboard_tx: Option<mpsc::Sender<LeaderboardMessage>>,
@@ -137,6 +153,9 @@ impl BonkRoom {
         };
 
         BonkRoom {
+            link,
+            http,
+            data,
             rx,
             client,
             leaderboard_tx,
@@ -171,7 +190,7 @@ impl BonkRoom {
                     }
                 _ = self.chat_clear_interval.tick() => {
                     let _ = self.client.execute(
-                        "document.getElementById(\"newbonklobby_chat_content\").innerHTML = \"\";",
+                        "gdoc.getElementById(\"newbonklobby_chat_content\").innerHTML = \"\";",
                         vec![],
                     ).await;
                 }
@@ -294,7 +313,7 @@ impl BonkRoom {
         let in_lobby = self
             .client
             .execute(
-                "return document.getElementById('newbonklobby').style.opacity === '1';",
+                "return gdoc.getElementById('newbonklobby').style.opacity === '1';",
                 vec![],
             )
             .await;
@@ -303,10 +322,7 @@ impl BonkRoom {
                 if !in_lobby {
                     let _ = self
                         .client
-                        .execute(
-                            "document.getElementById(\"pretty_top_exit\").click();",
-                            vec![],
-                        )
+                        .execute("gdoc.getElementById(\"pretty_top_exit\").click();", vec![])
                         .await;
                 } else {
                     let _ = self
@@ -443,8 +459,6 @@ impl BonkRoom {
     }
 
     async fn update(&mut self) {
-        //TODO check if room closed.
-
         let remaining_time = self.transition_timer.deadline() - Instant::now();
         match self.state {
             State::Idle => (),
@@ -503,26 +517,31 @@ impl BonkRoom {
         }
 
         'in_lobby: {
-            let (State::GameStarting | State::InGame) = self.state else {
-                break 'in_lobby;
-            };
-
             let output = self
                 .client
                 .execute(
-                    "return document.getElementById('newbonklobby').style.opacity === '1';",
+                    "return [\
+                        gdoc.getElementById('mainmenuelements').style.display !== 'none',\
+                        gdoc.getElementById('newbonklobby').style.opacity === '0',\
+                    ];",
                     vec![json!(self.room_parameters.mode == Mode::Football)],
                 )
                 .await;
             let Ok(output) = output else {
                 break 'in_lobby;
             };
-            let Ok(output) = from_value::<bool>(output) else {
+            let Ok(output) = from_value::<Vec<bool>>(output) else {
                 break 'in_lobby;
             };
 
+            if let Some(true) = output.get(0) {
+                self.remake_room().await;
+                self.reset().await;
+                return;
+            }
+
             if let State::GameStarting = self.state {
-                if !output {
+                if output.get(1) == Some(&true) {
                     self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                         self.room_parameters.game_time,
                     )));
@@ -531,7 +550,7 @@ impl BonkRoom {
                 }
             }
             if let State::InGame = self.state {
-                if output {
+                if output.get(1) == Some(&false) {
                     events::on_game_end(self, None, false).await;
                 }
             }
@@ -624,6 +643,145 @@ impl BonkRoom {
                 }
             }
         }
+    }
+
+    pub async fn remake_room(&mut self) {
+        let mut teams = false;
+        if let Queue::Teams = self.room_parameters.queue {
+            teams = true;
+        }
+        if let Mode::Football = self.room_parameters.mode {
+            teams = false;
+        }
+        let mode = match self.room_parameters.mode {
+            Mode::Football => "f",
+            Mode::Simple => "bs",
+            Mode::DeathArrows => "ard",
+            Mode::Arrows => "ar",
+            Mode::Grapple => "sp",
+            Mode::VTOL => "v",
+            Mode::Classic => "b",
+        };
+        let room_data = vec![json!({
+            "roomName": self.room_parameters.name,
+            "roomPass": self.room_parameters.password.clone(),
+            "maxPlayers": self.room_parameters.max_players,
+            "minLevel": self.room_parameters.min_level,
+            "unlisted": self.room_parameters.unlisted,
+            "teams": teams,
+            "mode": mode,
+            "rounds": self.room_parameters.rounds,
+        })];
+
+        println!("Remaking room...");
+        let _ = self
+            .client
+            .execute(
+                "\
+                let data = arguments[0];\
+                window.done = new Promise(async resolve => {\
+                    let roomLink = await sgrAPI.makeRoom(\
+                        data.roomName,\
+                        data.roomPass,\
+                        data.maxPlayers,\
+                        data.minLevel,\
+                        999,\
+                        data.unlisted,\
+                    );\
+                    sgrAPI.setTeams(data.teams);\
+                    sgrAPI.setMode(data.mode);\
+                    sgrAPI.gameInfo[2].wl = data.rounds;\
+                    sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
+                    sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
+                    sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
+                    window.messageBuffer = [];\
+               resolve(roomLink);});\
+                ",
+                room_data,
+            )
+            .await;
+
+        let mut room_link = "".to_string();
+        let mut success = false;
+        for _ in 0..20 {
+            if let Ok(output) = self
+                .client
+                .execute("return await window.done;", vec![])
+                .await
+            {
+                success = true;
+                let Ok(output) = serde_json::from_value::<String>(output) else {
+                    self.rx.close();
+                    return;
+                };
+                room_link = output;
+                break;
+            }
+        }
+        if !success {
+            println!("Timeout on remaking room.");
+            self.rx.close();
+            return;
+        };
+        if let Some(map) = self.room_parameters.maps.get(0) {
+            let _ = self
+                .client
+                .execute(
+                    "sgrAPI.loadMap(JSON.parse(arguments[0]));",
+                    vec![json!(map)],
+                )
+                .await;
+        }
+
+        self.reset().await;
+
+        println!("Room remade: {}", room_link);
+
+        let bonk_bot = {
+            let data = self.data.read().await;
+            data.get::<BonkBotKey>().cloned()
+        };
+        if let Some(bonk_bot) = bonk_bot {
+            //Limited backpressure
+            select! {
+                mut bonk_rooms = bonk_bot.bonk_rooms.lock() => {
+                    let Some(room) = bonk_rooms.iter_mut().find(|room| room.link == self.link) else {
+                        println!("Bonk room failed to find room in room list.");
+                        return;
+                    };
+                    room.link = room_link.clone();
+                },
+                _ = sleep(Duration::from_secs(3)) => (),
+            }
+        };
+        self.link = room_link.clone();
+
+        let db = {
+            let data = self.data.read().await;
+            data.get::<crate::DatabaseKey>().cloned()
+        };
+
+        let Some(db) = db else {
+            println!("Bonk room failed to get database connection.");
+            return;
+        };
+
+        let Ok(channel_id): Result<i64> =
+            sqlx::query_scalar("SELECT id FROM channels WHERE type = 'room log'")
+                .fetch_one(db.db.as_ref())
+                .await
+                .context("")
+        else {
+            return;
+        };
+
+        let channel_id = ChannelId::new(channel_id as u64);
+        let _ = channel_id
+            .say(
+                &self.http,
+                format!("Room remade: {}\n{}", self.room_parameters.name, room_link,),
+            )
+            .await;
     }
 
     pub async fn chat(&mut self, message: String) {

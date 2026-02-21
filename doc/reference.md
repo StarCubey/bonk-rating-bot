@@ -85,7 +85,7 @@ team_num = 2
 ffa_min = 2
 ffa_max = 7
 # Timers are in seconds
-idle_time = 5
+idle_time = 0
 pick_time = 60
 ready_time = 60
 strike_time = 20

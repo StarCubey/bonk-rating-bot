@@ -1,5 +1,4 @@
-# WIP
+This is MixieBot.
 
-This is a bot that automatically hosts rooms and calculates ratings using a statistical rating algorithm. Currently, most functionality hasn't been implemented yet.
-
-Discord commands and config files are used to easily open rooms according to specific settings. The bot loads the sgrAPI mod on room creation in order to simplify room hosting automation.
+This is a bonk.io bot that hosts elo rooms. The bot has a lot of configuration options and can make rooms for a variety of modes for 1v1, Teams, and FFA. The bot is free to use but if you do you may want to message me on discord (starcubey0003
+). The bot also has custom mods in the dependencies folder.

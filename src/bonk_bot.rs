@@ -4,6 +4,7 @@ pub mod bonk_room;
 pub mod events;
 pub mod room_maker;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -13,7 +14,15 @@ use tokio::{select, time};
 
 use self::bonk_room::BonkRoomMessage;
 use self::room_maker::{RoomMaker, RoomMakerMessage};
+use crate::bonk_bot::room_maker::RoomParameters;
 use crate::leaderboard::{Leaderboard, LeaderboardMessage, LeaderboardSettings};
+
+#[derive(Clone)]
+pub struct BonkRoom {
+    link: String,
+    parameters: RoomParameters,
+    tx: mpsc::Sender<BonkRoomMessage>,
+}
 
 pub struct BonkBotKey;
 
@@ -21,10 +30,12 @@ impl TypeMapKey for BonkBotKey {
     type Value = BonkBotValue;
 }
 
+/// When acquiring locks outside of bonk_bot.rs, use try lock or limit backpressure.
+#[derive(Clone)]
 pub struct BonkBotValue {
-    bonk_rooms: Mutex<Vec<mpsc::Sender<BonkRoomMessage>>>,
+    bonk_rooms: Arc<Mutex<Vec<BonkRoom>>>,
     roommaker_tx: mpsc::Sender<RoomMakerMessage>,
-    leaderboards_tx: Mutex<Vec<(i64, mpsc::WeakSender<LeaderboardMessage>)>>,
+    leaderboards_tx: Arc<Mutex<Vec<(i64, mpsc::WeakSender<LeaderboardMessage>)>>>,
 }
 
 impl BonkBotValue {
@@ -39,9 +50,9 @@ impl BonkBotValue {
         });
 
         BonkBotValue {
-            bonk_rooms: Mutex::new(Vec::new()),
+            bonk_rooms: Arc::new(Mutex::new(Vec::new())),
             roommaker_tx,
-            leaderboards_tx: Mutex::new(Vec::new()),
+            leaderboards_tx: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -88,12 +99,7 @@ impl BonkBotValue {
                 let (tx, rx) = mpsc::channel(10);
                 let mut leaderboard = Leaderboard::new(rx, ctx.clone(), settings).await?;
 
-                tokio::spawn(async move {
-                    let res = leaderboard.run().await;
-                    if let Result::Err(err) = res {
-                        println!("Leaderboard error: {}", err)
-                    }
-                });
+                tokio::spawn(async move { leaderboard.run().await });
 
                 leaderboards_tx.push((id, tx.clone().downgrade()));
                 leaderboard_tx = Some(tx);
@@ -103,16 +109,22 @@ impl BonkBotValue {
         let (tx, rx) = oneshot::channel();
         self.roommaker_tx
             .send(RoomMakerMessage {
+                http: ctx.http.clone(),
+                data: ctx.data.clone(),
                 bonkroom_tx: tx,
                 leaderboard_tx,
-                room_parameters,
+                room_parameters: room_parameters.clone(),
             })
             .await?;
 
         let output = rx.await??;
 
         let mut bonk_rooms = self.bonk_rooms.lock().await;
-        bonk_rooms.push(output.bonkroom_tx);
+        bonk_rooms.push(BonkRoom {
+            link: output.room_link.clone(),
+            parameters: room_parameters,
+            tx: output.bonkroom_tx,
+        });
 
         Ok(output.room_link)
     }
@@ -121,14 +133,21 @@ impl BonkBotValue {
         let bonk_rooms = self.bonk_rooms.lock().await;
 
         for i in 0..bonk_rooms.len() {
-            bonk_rooms
+            if let Err(_) = bonk_rooms
                 .get(i)
                 .context("Index out of bounds")?
+                .tx
                 .send(BonkRoomMessage::Close)
-                .await?;
+                .await
+            {
+                println!("Room already closed.");
+            };
         }
 
-        let bonk_rooms_clone = bonk_rooms.clone();
+        let bonk_rooms_clone = bonk_rooms
+            .iter()
+            .map(|r| r.tx.clone())
+            .collect::<Vec<mpsc::Sender<BonkRoomMessage>>>();
         let all_closed = tokio::spawn(async {
             for room in bonk_rooms_clone {
                 room.closed().await;
@@ -143,7 +162,7 @@ impl BonkBotValue {
         };
 
         for room in bonk_rooms.iter() {
-            let _ = room.send(BonkRoomMessage::ForceClose).await;
+            let _ = room.tx.send(BonkRoomMessage::ForceClose).await;
         }
 
         result
@@ -153,11 +172,12 @@ impl BonkBotValue {
         let mut bonk_rooms = self.bonk_rooms.lock().await;
 
         for i in (0..bonk_rooms.len()).rev() {
-            bonk_rooms
+            let _ = bonk_rooms
                 .get(i)
                 .context("Index out of bounds")?
+                .tx
                 .send(BonkRoomMessage::ForceClose)
-                .await?;
+                .await;
 
             bonk_rooms.pop();
         }

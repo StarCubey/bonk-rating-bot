@@ -130,7 +130,7 @@ impl Leaderboard {
         })
     }
 
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) {
         // let mut update_timer = interval(Duration::from_secs(5 * 60));
         // update_timer.tick().await;
         // update_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -149,7 +149,9 @@ impl Leaderboard {
                                 _ = match_str.send(openskill::update(self, teams, ties).await);
 
                                 if self.can_update {
-                                    self.update_leaderboard().await?;
+                                    if let Err(e) = self.update_leaderboard().await {
+                                        println!("Error when updating leaderboard: {}", e);
+                                    };
                                     self.update_timer = Box::pin(time::sleep(Duration::from_secs(update_delay)));
                                     self.can_update = false;
                                 } else {
@@ -161,7 +163,9 @@ impl Leaderboard {
                     },
                     _ = self.update_timer.as_mut() => {
                         if self.needs_update {
-                            self.update_leaderboard().await?;
+                            if let Err(e) = self.update_leaderboard().await {
+                                println!("Error when updating leaderboard: {}", e);
+                            };
                             self.update_timer = Box::pin(time::sleep(Duration::from_secs(update_delay)));
                             self.needs_update = false;
                         } else {
@@ -172,8 +176,6 @@ impl Leaderboard {
                 }
             },
         }
-
-        Ok(())
     }
 
     pub async fn save_game(

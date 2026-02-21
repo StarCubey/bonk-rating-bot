@@ -311,6 +311,9 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
             if let Some(command) = chat_message.strip_prefix("|") {
                 new_message = format!("{}{}", "!", command);
                 chat_message = new_message.as_str();
+            } else if let Some(command) = chat_message.strip_prefix("-") {
+                new_message = format!("{}{}", "!", command);
+                chat_message = new_message.as_str();
             }
 
             if let Some(command) = chat_message.strip_prefix("!") {
@@ -326,7 +329,13 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                 }
                 match command.remove(0).to_lowercase().as_str() {
                     "help" | "h" | "?" => room.chat(help_string).await,
-                    "ping" => room.chat("Pong!".to_string()).await,
+                    "ping" => {
+                        // if let Err(e) = room.client.execute("sgrAPI.socket.close();", vec![]).await
+                        // {
+                        //     println!("{}", e);
+                        // };
+                        room.chat("Pong!".to_string()).await;
+                    }
                     "discord" | "d" => bonk_commands::discord(room).await,
                     "queue" | "q" => {
                         room.chat(format!(
@@ -349,6 +358,20 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                 }
             }
         }
+    } else if let Some(message) = message.strip_prefix("42[42,") {
+        let id: String = message.chars().take_while(|c| c.is_digit(10)).collect();
+        let Ok(id) = id.parse::<i32>() else {
+            return;
+        };
+
+        //Accept friend request
+        let _ = room
+            .client
+            .execute(
+                "sgrAPI.send(`42[35,{\"id\":${arguments[0]}}]`);",
+                vec![json!(id)],
+            )
+            .await;
     }
 }
 
