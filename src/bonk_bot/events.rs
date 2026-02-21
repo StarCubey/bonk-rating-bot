@@ -120,7 +120,7 @@ async fn transition_idle(room: &mut BonkRoom) {
                 room.warning_step = 0;
                 room.state = State::Pick;
                 room.chat(format!(
-                    "{}, pick an opponent with !p abbreviation",
+                    "{}, pick an opponent with !p abbreviation or !any for a random opponent.",
                     picker.name
                 ))
                 .await;
@@ -350,6 +350,7 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                         .await
                     }
                     "pick" | "p" => bonk_commands::pick(room, id, command.join(" ")).await,
+                    "any" | "a" => bonk_commands::any(room, id).await,
                     "strike" | "s" => bonk_commands::strike(room, id).await,
                     "ready" | "r" => bonk_commands::ready(room, id).await,
                     "reset" | "re" => bonk_commands::reset(room, id).await,

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rand::Rng;
+use rand::{seq::IndexedRandom, Rng};
 use serde_json::json;
 use tokio::time::{self, Instant};
 
@@ -160,6 +160,24 @@ pub async fn pick(room: &mut BonkRoom, id: i32, name: String) {
     }
 }
 
+pub async fn any(room: &mut BonkRoom, id: i32) {
+    let State::Pick = room.state else {
+        return;
+    };
+
+    let keys = room
+        .queue
+        .iter()
+        .filter(|p| p.1.in_room && p.1.team == 0)
+        .map(|p| p.1.name.clone())
+        .collect::<Vec<String>>();
+
+    let selection = keys.choose(&mut rand::rng());
+    if let Some(selection) = selection {
+        let selection = selection.clone();
+        pick(room, id, selection).await;
+    }
+}
 pub async fn strike(room: &mut BonkRoom, id: i32) {
     if let State::MapSelection = room.state {
         let start = room

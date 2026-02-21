@@ -466,8 +466,11 @@ impl BonkRoom {
                 let warn = self.room_parameters.pick_time / 2;
                 if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
                     self.warning_step = 1;
-                    self.chat(format!("{} left to pick.", sec_to_string(warn)))
-                        .await;
+                    self.chat(format!(
+                        "{} left to pick. Use !p abbreviation",
+                        sec_to_string(warn)
+                    ))
+                    .await;
                 }
             }
             State::MapSelection => (),
