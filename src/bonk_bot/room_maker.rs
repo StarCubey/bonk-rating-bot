@@ -307,20 +307,23 @@ async fn make_room(
 
     println!("Loading mods...");
 
-    c.execute(
+    c.execute_async(
         &format!(
             "{}{}{}{}",
             "window.done = new Promise(async resolve => {",
             mods,
             "await window.sgrAPIFunctionsLoaded;",
-            "resolve();});",
+            "resolve();});arguments[0]();",
         ),
         vec![],
     )
     .await?;
     let mut success = false;
     for _ in 0..5 {
-        if let Ok(_) = c.execute("await window.done;", vec![]).await {
+        if let Ok(_) = c
+            .execute_async("await window.done; arguments[0]();", vec![])
+            .await
+        {
             success = true;
             break;
         }
@@ -331,20 +334,23 @@ async fn make_room(
 
     println!("Logging in...");
 
-    c.execute(
+    c.execute_async(
         &format!(
             "{}",
             "let credentials = arguments[0];\
             window.done = new Promise(async resolve => {;\
                 await sgrAPI.logIn(credentials.username, credentials.password);\
-            resolve();});"
+            resolve();}); arguments[1]();"
         ),
         credentials,
     )
     .await?;
     let mut success = false;
     for _ in 0..5 {
-        if let Ok(_) = c.execute("await window.done;", vec![]).await {
+        if let Ok(_) = c
+            .execute_async("await window.done; arguments[0]();", vec![])
+            .await
+        {
             success = true;
             break;
         }
@@ -355,7 +361,7 @@ async fn make_room(
 
     println!("Creating room...");
 
-    c.execute(
+    c.execute_async(
         &format!(
             "{}",
             "let data = arguments[0];\
@@ -380,7 +386,7 @@ async fn make_room(
                 };\
                 window.gameFrame = await window.gameFrame;\
                 window.gdoc = gameFrame.contentDocument;\
-            resolve(roomLink);});",
+            resolve(roomLink);}); arguments[1]();",
         ),
         room_data,
     )
@@ -389,7 +395,10 @@ async fn make_room(
     let mut room_link = "".to_string();
     let mut success = false;
     for _ in 0..5 {
-        if let Ok(output) = c.execute("return await window.done;", vec![]).await {
+        if let Ok(output) = c
+            .execute_async("arguments[0](await window.done);", vec![])
+            .await
+        {
             success = true;
             room_link = serde_json::from_value(output)?;
             break;
