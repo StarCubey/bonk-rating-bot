@@ -276,14 +276,15 @@ window.sgrMods["sgrAPI"] = code => {
 
   //Makes a room and returns the room link.
   fwin.sgrAPI.makeRoom = async (name, password, maxPlayers, minLevel, maxLevel, unlisted) => {
+    fdoc.getElementById("roomlistrefreshbutton").click();
+    while(fdoc.getElementById("roomliststatustext").style.visibility !== "hidden") await new Promise(result => setTimeout(result, 500));
+    fdoc.getElementById("roomlistcreatewindowgamename").value = name;
+    fdoc.getElementById("roomlistcreatewindowpassword").value = password;
+    fdoc.getElementById("roomlistcreatewindowmaxplayers").value = maxPlayers;
+    fdoc.getElementById("roomlistcreatewindowminlevel").value = minLevel;
+    fdoc.getElementById("roomlistcreatewindowmaxlevel").value = maxLevel;
+    fdoc.getElementById("roomlistcreatewindowunlistedcheckbox").checked = unlisted;
     while(true) {
-      fdoc.getElementById("roomlistrefreshbutton").click();
-      fdoc.getElementById("roomlistcreatewindowgamename").value = name;
-      fdoc.getElementById("roomlistcreatewindowpassword").value = password;
-      fdoc.getElementById("roomlistcreatewindowmaxplayers").value = maxPlayers;
-      fdoc.getElementById("roomlistcreatewindowminlevel").value = minLevel;
-      fdoc.getElementById("roomlistcreatewindowmaxlevel").value = maxLevel;
-      fdoc.getElementById("roomlistcreatewindowunlistedcheckbox").checked = unlisted;
       fdoc.getElementById("roomlistcreatecreatebutton").click();
       await new Promise(result => setTimeout(result, 2000));
       let connectStr = fdoc.getElementById("sm_connectingWindow_text").innerText;

@@ -390,7 +390,7 @@ async fn make_room(
     let mut success = false;
     for _ in 0..5 {
         if let Ok(output) = c.execute("return (await window.gameFrame).contentDocument.getElementById(\"sm_connectingWindow_text\").innerText", vec![]).await {
-            dbg!(output);
+            dbg!(output);//TODO debug
         }
         if let Ok(output) = c.execute("return await window.done;", vec![]).await {
             success = true;
