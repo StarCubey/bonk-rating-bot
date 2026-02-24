@@ -399,6 +399,15 @@ async fn make_room(
         return Err(anyhow!("Timeout on room creation."));
     }
 
+    if let Some(map) = room_parameters.maps.get(0) {
+        let _ = c
+            .execute(
+                "sgrAPI.loadMap(JSON.parse(arguments[0]));",
+                vec![json!(map)],
+            )
+            .await;
+    }
+
     println!("Room created: {}", room_link);
 
     Ok(room_link)
