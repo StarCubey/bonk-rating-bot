@@ -372,13 +372,22 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
         };
 
         //Accept friend request
-        let _ = room
-            .client
-            .execute(
-                "sgrAPI.send(`42[35,{\"id\":${arguments[0]}}]`);",
-                vec![json!(id)],
-            )
-            .await;
+        let player = room.queue.iter().find(|p| p.1.id == id);
+        if let Some(player) = player {
+            let _ = room
+                .client
+                .execute(
+                    "\
+                    sgrAPI.send(`42[35,{\"id\":${arguments[0]}}]`);\
+                    sgrAPI.oldPost(\
+                        \"https://bonk2.io/scripts/friends.php\",\
+                        {task: \"send\", theirname: arguments[1], token: sgrAPI.getToken()},\
+                    );\
+                    ",
+                    vec![json!(id), json!(player.1.name)],
+                )
+                .await;
+        }
     }
 }
 
