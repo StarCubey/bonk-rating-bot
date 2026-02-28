@@ -85,7 +85,7 @@ fn ffa_max_default() -> usize {
     7
 }
 fn idle_time_default() -> u64 {
-    0
+    1
 }
 fn pick_time_default() -> u64 {
     60
