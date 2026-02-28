@@ -17,6 +17,12 @@ use super::bonk_room::{BonkRoom, Player};
 
 pub async fn on_transition_timer_expired(room: &mut BonkRoom) {
     match room.state {
+        State::Remaking => {
+            room.discord_status_message(format!("Failed to remake {}.", room.room_parameters.name))
+                .await;
+            println!("Timeout on remaking room.");
+            room.rx.close();
+        }
         State::Idle => transition_idle(room).await,
         State::Pick => transition_pick(room).await,
         State::MapSelection => {
@@ -416,6 +422,7 @@ pub async fn on_player_join(room: &mut BonkRoom, player: Player) {
     }
 
     match room.state {
+        State::Remaking => (),
         State::Idle => match room.room_parameters.queue {
             Queue::Singles => {
                 if room.get_queue_mut().len() == 2 {
@@ -474,7 +481,7 @@ pub async fn on_player_join(room: &mut BonkRoom, player: Player) {
 
 pub async fn on_player_leave(room: &mut BonkRoom, player: Player) {
     match room.state {
-        State::Idle => (),
+        State::Remaking | State::Idle => (),
         State::Pick => match &mut room.game_players {
             GamePlayers::Singles { picker, picked: _ } => {
                 let Some(picker) = picker else {

@@ -7,7 +7,7 @@
 // @version     2.0
 // @author      StarCubey
 // @license     MIT
-// @description sgrAPI with less functionality bundled with injector.
+// @description An API for bots and stuff. Requires sgrInjector.
 // ==/UserScript==
 
 // Some of the regexes and variable names are copied from bonk host: https://github.com/Salama/bonk-host
@@ -276,17 +276,16 @@ window.sgrMods["sgrAPI"] = code => {
 
   //Makes a room and returns the room link.
   fwin.sgrAPI.makeRoom = async (name, password, maxPlayers, minLevel, maxLevel, unlisted) => {
-    fdoc.getElementById("roomlistrefreshbutton").click();
-    while(fdoc.getElementById("roomliststatustext").style.visibility !== "hidden") await new Promise(result => setTimeout(result, 500));
     fdoc.getElementById("roomlistcreatewindowgamename").value = name;
     fdoc.getElementById("roomlistcreatewindowpassword").value = password;
     fdoc.getElementById("roomlistcreatewindowmaxplayers").value = maxPlayers;
     fdoc.getElementById("roomlistcreatewindowminlevel").value = minLevel;
     fdoc.getElementById("roomlistcreatewindowmaxlevel").value = maxLevel;
     fdoc.getElementById("roomlistcreatewindowunlistedcheckbox").checked = unlisted;
-    while(true) {
+    for(let i = 0; ; i++) {
       fdoc.getElementById("roomlistcreatecreatebutton").click();
-      await new Promise(result => setTimeout(result, 2000));
+      if(i < 30) await new Promise(result => setTimeout(result, 2000));
+      else await new Promise(result => setTimeout(result, 15000));
       let connectStr = fdoc.getElementById("sm_connectingWindow_text").innerText;
       let connectVisibility = fdoc.getElementById("sm_connectingContainer").style.visibility;
       if(connectStr !== "Creating room...\nConnect error" && connectVisibility !== "hidden" && connectVisibility !== "") {
@@ -373,6 +372,19 @@ window.sgrMods["sgrAPI"] = code => {
       resolveJQueryLoaded();
     }
   }, 250);
+
+  // Preparing room list so room creation is possible.
+  for(let i = 0; i < 4; i++) {
+    fdoc.getElementById("roomlistrefreshbutton").click();
+    for(let j = 0; j < 10; j++){
+      if(fdoc.getElementById("roomliststatustext").style.visibility === "hidden") break;
+      await new Promise(result => setTimeout(result, 500));
+      if(fdoc.getElementById("roomliststatustext").innerText === "Couldn't get rooms, please try again") {
+        fdoc.getElementById("roomlistrefreshbutton").click();
+      }
+    }
+    if(fdoc.getElementById("roomliststatustext").style.visibility === "hidden") break;
+  }
 
   resolveFunctionsLoaded();
 })();

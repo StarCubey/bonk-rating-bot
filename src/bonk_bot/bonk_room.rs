@@ -83,6 +83,7 @@ pub enum GamePlayers {
 
 #[derive(PartialEq)]
 pub enum State {
+    Remaking,
     Idle,
     Pick,
     MapSelection,
@@ -197,7 +198,7 @@ impl BonkRoom {
                 message = self.rx.recv() => match message {
                     Some(BonkRoomMessage::Close) => {
                         match &self.state {
-                            State::Idle => {
+                            State::Idle | State::Remaking => {
                                 let _ = self
                                     .client
                                     .execute(
@@ -459,9 +460,13 @@ impl BonkRoom {
     }
 
     async fn update(&mut self) {
+        if self.state == State::Remaking {
+            self.update_remake_room().await;
+            return;
+        }
+
         let remaining_time = self.transition_timer.deadline() - Instant::now();
         match self.state {
-            State::Idle => (),
             State::Pick => {
                 let warn = self.room_parameters.pick_time / 2;
                 if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
@@ -473,7 +478,6 @@ impl BonkRoom {
                     .await;
                 }
             }
-            State::MapSelection => (),
             State::Ready => {
                 let warn = self.room_parameters.ready_time / 2;
                 if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
@@ -485,7 +489,6 @@ impl BonkRoom {
                     .await;
                 }
             }
-            State::GameStarting => (),
             State::InGame => {
                 let warn1 = self.room_parameters.game_time / 2;
                 let warn2 = 60;
@@ -517,6 +520,7 @@ impl BonkRoom {
                         .await;
                 }
             }
+            _ => (),
         }
 
         'in_lobby: {
@@ -538,8 +542,7 @@ impl BonkRoom {
             };
 
             if let Some(true) = output.get(0) {
-                self.remake_room().await;
-                self.reset().await;
+                self.start_remake_room().await;
                 return;
             }
 
@@ -648,7 +651,12 @@ impl BonkRoom {
         }
     }
 
-    pub async fn remake_room(&mut self) {
+    pub async fn start_remake_room(&mut self) {
+        if self.closing {
+            self.rx.close();
+            return;
+        }
+
         let mut teams = false;
         if let Queue::Teams = self.room_parameters.queue {
             teams = true;
@@ -677,55 +685,75 @@ impl BonkRoom {
         })];
 
         println!("Remaking room...");
-        let _ = self
+        if let Err(e) = self
             .client
             .execute(
-                "\
-                let data = arguments[0];\
-                window.done = new Promise(async resolve => {\
-                    let roomLink = await sgrAPI.makeRoom(\
-                        data.roomName,\
-                        data.roomPass,\
-                        data.maxPlayers,\
-                        data.minLevel,\
-                        999,\
-                        data.unlisted,\
-                    );\
-                    sgrAPI.setTeams(data.teams);\
-                    sgrAPI.setMode(data.mode);\
-                    sgrAPI.gameInfo[2].wl = data.rounds;\
-                    sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);\
-                    sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();\
-                    sgrAPI.toolFunctions.networkEngine.doTeamLock(true);\
-                    window.messageBuffer = [];\
-               resolve(roomLink);});\
-                ",
+                r#"
+                let data = arguments[0];
+                window.done = undefined;
+                window.error = undefined;
+                (async () => {
+                    try {
+                        let roomLink = await sgrAPI.makeRoom(
+                            data.roomName,
+                            data.roomPass,
+                            data.maxPlayers,
+                            data.minLevel,
+                            999,
+                            data.unlisted,
+                        );
+                        sgrAPI.setTeams(data.teams);
+                        sgrAPI.setMode(data.mode);
+                        sgrAPI.gameInfo[2].wl = data.rounds;
+                        sgrAPI.toolFunctions.networkEngine.changeOwnTeam(0);
+                        sgrAPI.toolFunctions.networkEngine.sendNoHostSwap();
+                        sgrAPI.toolFunctions.networkEngine.doTeamLock(true);
+                        window.messageBuffer = [];
+                        window.done = roomLink;
+                    } catch(e) {
+                        window.error = e.message;
+                    }
+                })();
+                "#,
                 room_data,
             )
-            .await;
-
-        let mut room_link = "".to_string();
-        let mut success = false;
-        for _ in 0..20 {
-            if let Ok(output) = self
-                .client
-                .execute("return await window.done;", vec![])
-                .await
-            {
-                success = true;
-                let Ok(output) = serde_json::from_value::<String>(output) else {
-                    self.rx.close();
-                    return;
-                };
-                room_link = output;
-                break;
-            }
+            .await
+        {
+            println!("Error when remaking room: {}", e);
         }
-        if !success {
-            println!("Timeout on remaking room.");
+
+        self.transition_timer = Box::pin(time::sleep(Duration::from_mins(30)));
+        self.state = State::Remaking;
+    }
+
+    async fn update_remake_room(&mut self) {
+        let Ok(output) = self
+            .client
+            .execute("return [window.done, window.error,];", vec![])
+            .await
+        else {
+            println!("Error while remaking room.");
             self.rx.close();
             return;
         };
+        let Ok(output) = serde_json::from_value::<Vec<Option<String>>>(output) else {
+            println!("Failed to get room link option from value when remaking room.");
+            self.rx.close();
+            return;
+        };
+
+        if let Some(Some(error)) = output.get(1) {
+            println!("Failed to remake room: {}", error);
+            self.discord_status_message(format!("Failed to remake {}.", self.room_parameters.name))
+                .await;
+            self.rx.close();
+            return;
+        }
+
+        let Some(Some(room_link)) = output.get(0) else {
+            return;
+        };
+
         if let Some(map) = self.room_parameters.maps.get(0) {
             let _ = self
                 .client
@@ -737,8 +765,6 @@ impl BonkRoom {
         }
 
         self.reset().await;
-
-        println!("Room remade: {}", room_link);
 
         let bonk_bot = {
             let data = self.data.read().await;
@@ -759,6 +785,15 @@ impl BonkRoom {
         };
         self.link = room_link.clone();
 
+        println!("Room remade: {}", room_link);
+        self.discord_status_message(format!(
+            "Room remade: {}\n{}",
+            self.room_parameters.name, room_link,
+        ))
+        .await;
+    }
+
+    pub async fn discord_status_message(&mut self, message: String) {
         let db = {
             let data = self.data.read().await;
             data.get::<crate::DatabaseKey>().cloned()
@@ -769,22 +804,16 @@ impl BonkRoom {
             return;
         };
 
-        let Ok(channel_id): Result<i64> =
-            sqlx::query_scalar("SELECT id FROM channels WHERE type = 'room log'")
+        let Ok(channel_id) =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM channels WHERE type = 'room log'")
                 .fetch_one(db.db.as_ref())
                 .await
                 .context("")
         else {
             return;
         };
-
         let channel_id = ChannelId::new(channel_id as u64);
-        let _ = channel_id
-            .say(
-                &self.http,
-                format!("Room remade: {}\n{}", self.room_parameters.name, room_link,),
-            )
-            .await;
+        let _ = channel_id.say(&self.http, message).await;
     }
 
     pub async fn chat(&mut self, message: String) {
