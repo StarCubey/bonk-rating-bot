@@ -67,7 +67,7 @@ pub struct Leaderboard {
 
 const DISCORD_MARKDOWN: [char; 9] = ['\\', '*', '_', '~', '`', '>', ':', '#', '-'];
 const DISCORD_CHARACTER_LIMIT: usize = 2000;
-const LEADERBOARD_DISPLAYED_PLACEMENTS: usize = 500;
+const LEADERBOARD_DISPLAYED_PLACEMENTS: usize = 300;
 
 impl Leaderboard {
     pub async fn new(
