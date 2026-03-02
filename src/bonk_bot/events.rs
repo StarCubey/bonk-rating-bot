@@ -1,4 +1,4 @@
-use rand::{seq::SliceRandom, Rng};
+use rand::{seq::SliceRandom, RngExt};
 use serde::Deserialize;
 use serde_json::{from_value, json};
 use std::time::Duration;

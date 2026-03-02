@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use rand::{seq::IndexedRandom, Rng};
+use rand::{seq::IndexedRandom, RngExt};
 use serde_json::json;
 use tokio::time::{self, Instant};
 
