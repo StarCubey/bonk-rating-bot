@@ -321,6 +321,47 @@ pub async fn ready(room: &mut BonkRoom, id: i32) {
     }
 }
 
+pub async fn skip(room: &mut BonkRoom, id: i32) {
+    if room.state != State::Pick {
+        return;
+    }
+
+    let mut player_option;
+    let picker = match &room.game_players {
+        GamePlayers::Singles { picker, picked: _ } => picker,
+        GamePlayers::Teams {
+            teams,
+            picker_idx: _,
+        } => {
+            let mut picker = &None;
+            for team in teams {
+                let Some(player) = team.get(0) else { continue };
+
+                if player.id == id {
+                    player_option = Some(player.clone());
+                    picker = &player_option;
+                }
+            }
+
+            picker
+        }
+        GamePlayers::FFA { in_game: _ } => &None,
+    };
+
+    let Some(picker) = picker else { return };
+    if id != picker.id {
+        return;
+    }
+
+    let picker_idx = room.queue.iter().position(|p| p.1.id == id);
+    if let Some(picker_idx) = picker_idx {
+        let queue_spot = room.queue.remove(picker_idx);
+        room.queue.push(queue_spot);
+    }
+
+    room.reset().await;
+}
+
 pub async fn reset(room: &mut BonkRoom, id: i32) {
     if room.state != State::GameStarting && room.state != State::InGame {
         return;
@@ -371,8 +412,9 @@ pub async fn reset(room: &mut BonkRoom, id: i32) {
 }
 
 pub async fn cancel(room: &mut BonkRoom, id: i32) {
-    if room.state != State::GameStarting && room.state != State::InGame {
-        return;
+    match room.state {
+        State::MapSelection | State::Ready | State::GameStarting | State::InGame => (),
+        _ => return,
     }
 
     let in_game = room.get_in_game();

@@ -446,7 +446,13 @@ impl BonkRoom {
         let in_game = self.get_in_game();
         let ready = in_game.iter().filter(|p| p.ready || p.ready_cmd).count();
 
-        if ready >= in_game.len() {
+        let total = match self.room_parameters.queue {
+            Queue::Singles => 2,
+            Queue::Teams => self.room_parameters.team_num * self.room_parameters.team_size,
+            Queue::FFA => usize::max(1, in_game.len()),
+        };
+
+        if ready >= total {
             let _ = self.client.execute("sgrAPI.startGame();", vec![]).await;
             self.transition_timer = Box::pin(time::sleep(Duration::MAX));
             self.warning_step = 0;

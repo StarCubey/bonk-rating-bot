@@ -173,6 +173,7 @@ async fn transition_idle(room: &mut BonkRoom) {
                     }
                 } else {
                     for (i, captain) in captains.iter().enumerate() {
+                        println!("{} {}, {}", captain.name, captain.id, i); //TODO debug
                         let _ = room.client.execute(
                             "sgrAPI.toolFunctions.networkEngine.changeOtherTeam(arguments[0], arguments[1]);",
                             vec![json!(captain.id), json!(2 + i)]
@@ -191,7 +192,7 @@ async fn transition_idle(room: &mut BonkRoom) {
                 room.state = State::Pick;
                 if let Some(player) = captains.get(0) {
                     room.chat(format!(
-                        "{}, pick a teammate with !p <abbreviation>",
+                        "{}, pick a teammate with !p abbreviation or !any for a random teammate.",
                         player.name
                     ))
                     .await;
@@ -359,6 +360,7 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                     "any" | "a" => bonk_commands::any(room, id).await,
                     "strike" | "s" => bonk_commands::strike(room, id).await,
                     "ready" | "r" => bonk_commands::ready(room, id).await,
+                    "skip" | "sk" => bonk_commands::skip(room, id).await,
                     "reset" | "re" => bonk_commands::reset(room, id).await,
                     "cancel" | "c" => bonk_commands::cancel(room, id).await,
                     _ => room.chat(help_string).await,

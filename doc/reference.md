@@ -9,6 +9,7 @@
 !pick, !p <name>: When prompted, this command chooses and opponent to play against.
 !any: Picks a random player.
 !ready, !r: Indicaates that you're ready to play before a game.
+!skip, !sk: Opts out of picking an opponent moving you to the end of the queue.
 !reset: Resets the current round with the same score.
 !cancel, !c: Votes to cancel the game without recording the result.
 ```
@@ -86,7 +87,9 @@ team_num = 2
 ffa_min = 2
 ffa_max = 7
 # Timers are in seconds
-idle_time = 0
+# An idle_time of 0 breaks change team.
+# And sometimes (probably teams for ffa) an idle time less than 5 breaks change team.
+idle_time = 1
 pick_time = 60
 ready_time = 60
 strike_time = 20
