@@ -38,6 +38,13 @@ pub enum LeaderboardMessage {
         ties: Vec<bool>,
         match_str: oneshot::Sender<Result<String>>,
     },
+    TopPlayers {
+        str: oneshot::Sender<Result<String>>,
+    },
+    PlayerInfo {
+        str: oneshot::Sender<Result<String>>,
+        name: String,
+    },
 }
 
 #[derive(FromRow, Clone, Debug)]
@@ -68,6 +75,7 @@ pub struct Leaderboard {
 const DISCORD_MARKDOWN: [char; 9] = ['\\', '*', '_', '~', '`', '>', ':', '#', '-'];
 const DISCORD_CHARACTER_LIMIT: usize = 2000;
 const LEADERBOARD_DISPLAYED_PLACEMENTS: usize = 300;
+const BONK_LB_DISPLAYED_PLACEMENTS: i32 = 5;
 
 impl Leaderboard {
     pub async fn new(
@@ -158,6 +166,40 @@ impl Leaderboard {
                                     self.needs_update = true;
                                 }
                             },
+                            Some(LeaderboardMessage::TopPlayers {str}) => {
+                                let Ok(players): Result<Vec<PlayerData>> =
+                                    sqlx::query_as(
+                                        "SELECT * from lb_players \
+                                        WHERE lb_id = $1 \
+                                        ORDER BY display_rating DESC \
+                                        LIMIT $2"
+                                    )
+                                    .bind(self.id)
+                                    .bind(BONK_LB_DISPLAYED_PLACEMENTS)
+                                    .fetch_all(self.db.as_ref())
+                                    .await.context("") else {
+                                        let _ = str.send(Err(anyhow!("Database query error.")));
+                                        continue
+                                    };
+
+                                let _ = str.send(Ok(
+                                    players
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, p)|
+                                            format!(
+                                                "{}: {} ({:.0}, σ = {:.0})",
+                                                to_ordinal(i + 1),
+                                                p.name,
+                                                p.display_rating,
+                                                p.rating_deviation
+                                            )
+                                        )
+                                        .collect::<Vec<String>>()
+                                        .join(", ")
+                                ));
+                            },
+                            Some(LeaderboardMessage::PlayerInfo {str, name}) => { self.player_info(str, name).await; },
                             None => break,
                         };
                     },
@@ -310,6 +352,46 @@ impl Leaderboard {
             .await?;
 
         Ok(())
+    }
+
+    async fn player_info(&self, str: oneshot::Sender<Result<String>>, name: String) {
+        let Ok(players): Result<Vec<PlayerData>> = sqlx::query_as(
+            "SELECT * FROM lb_players WHERE lb_id = $1 ORDER BY display_rating DESC",
+        )
+        .bind(self.id)
+        .fetch_all(self.db.as_ref())
+        .await
+        .context("") else {
+            let _ = str.send(Err(anyhow!("Database query error.")));
+            return;
+        };
+
+        let Some(player) = players.iter().enumerate().find(|p| p.1.name == name) else {
+            let _ = str.send(Err(anyhow!("Unable to find player.")));
+            return;
+        };
+
+        let Ok((games,)): Result<(i64,)> =
+            sqlx::query_as("SELECT COUNT(*) FROM lb_game_teams where $1 = ANY(player_ids)")
+                .bind(player.1.id)
+                .fetch_one(self.db.as_ref())
+                .await
+                .context("")
+        else {
+            let _ = str.send(Err(anyhow!("Database query error.")));
+            return;
+        };
+
+        let _ = str.send(Ok(format!(
+            "{} elo = {:.0} ({} out of {}), σ = {:.0}, {} game{} played.",
+            player.1.name,
+            player.1.display_rating,
+            to_ordinal(player.0 + 1),
+            players.len(),
+            player.1.rating_deviation,
+            games,
+            if games == 1 { "" } else { "s" },
+        )));
     }
 }
 

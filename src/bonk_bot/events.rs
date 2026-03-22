@@ -327,7 +327,7 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                 let mut command: Vec<&str> = command.split(' ').collect();
 
                 let help_string = concat!(
-                    "!discord, !queue (lists the queue), ",
+                    "!discord, !leaderboard, !elo player !queue (lists the queue), ",
                     "!reset (votes to reset game with same score), !cancel (votes to cancel game)"
                 )
                 .to_string();
@@ -356,6 +356,10 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
                         ))
                         .await
                     }
+                    "leaderboard" | "lb" => {
+                        bonk_commands::leaderboard(room, command.join(" ")).await
+                    }
+                    "elo" | "e" => bonk_commands::elo(room, id, command.join(" ")).await,
                     "pick" | "p" => bonk_commands::pick(room, id, command.join(" ")).await,
                     "any" | "a" => bonk_commands::any(room, id).await,
                     "strike" | "s" => bonk_commands::strike(room, id).await,

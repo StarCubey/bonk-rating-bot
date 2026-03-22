@@ -2,14 +2,82 @@ use std::time::Duration;
 
 use rand::{seq::IndexedRandom, RngExt};
 use serde_json::json;
-use tokio::time::{self, Instant};
+use tokio::{
+    sync::oneshot,
+    time::{self, Instant},
+};
 
-use crate::bonk_bot::bonk_room::{GamePlayers, Player, State};
+use crate::{
+    bonk_bot::bonk_room::{GamePlayers, Player, State},
+    leaderboard::LeaderboardMessage,
+};
 
 use super::{bonk_room::BonkRoom, room_maker::Mode};
 
 pub async fn discord(room: &mut BonkRoom) {
     let Ok(response) = dotenv::var("DISCORD_SERVER_LINK") else {
+        return;
+    };
+    room.chat(response).await;
+}
+
+pub async fn leaderboard(room: &mut BonkRoom, name: String) {
+    if name != "" {
+        elo(room, 0, name).await;
+    }
+
+    let Some(leaderboard_tx) = &room.leaderboard_tx else {
+        return;
+    };
+
+    let (str, str_rx) = oneshot::channel();
+    let _ = leaderboard_tx
+        .send(LeaderboardMessage::TopPlayers { str })
+        .await;
+
+    let Ok(Ok(response)) = str_rx.await else {
+        return;
+    };
+    room.chat(response).await;
+}
+
+pub async fn elo(room: &mut BonkRoom, id: i32, name: String) {
+    let full_name;
+    if name != "" {
+        let keys = room
+            .queue
+            .iter()
+            .filter(|p| p.1.in_room)
+            .map(|p| p.1.name.clone())
+            .collect::<Vec<String>>();
+
+        let matches = fuzzy_finder(&name, &keys);
+        if matches.len() != 1 {
+            room.chat("I couldn't find a match.".to_string()).await;
+            return;
+        }
+        let Some(player) = matches.get(0) else { return };
+        full_name = player.clone();
+    } else {
+        let Some(player) = room.queue.iter().find(|p| p.1.id == id) else {
+            return;
+        };
+
+        full_name = player.1.name.clone();
+    }
+
+    let Some(leaderboard_tx) = &room.leaderboard_tx else {
+        return;
+    };
+
+    let (str, str_rx) = oneshot::channel();
+    let _ = leaderboard_tx
+        .send(LeaderboardMessage::PlayerInfo {
+            str,
+            name: full_name.clone(),
+        })
+        .await;
+    let Ok(Ok(response)) = str_rx.await else {
         return;
     };
     room.chat(response).await;
