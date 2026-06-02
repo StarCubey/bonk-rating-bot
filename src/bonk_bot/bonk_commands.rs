@@ -12,7 +12,7 @@ use crate::{
     leaderboard::LeaderboardMessage,
 };
 
-use super::{bonk_room::BonkRoom, room_maker::Mode};
+use super::{bonk_room::BonkRoom, room_manager::Mode};
 
 pub async fn discord(room: &mut BonkRoom) {
     let Ok(response) = dotenv::var("DISCORD_SERVER_LINK") else {

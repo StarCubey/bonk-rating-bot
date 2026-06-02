@@ -2,10 +2,12 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serenity::all::{ChannelId, CommandDataOptionValue, CommandInteraction, CreateMessage};
+use tokio::sync::oneshot;
 use tokio::time;
 
-use crate::bonk_bot::{room_maker::RoomParameters, BonkBotKey};
-use crate::DatabaseValue;
+use crate::bonk_bot::room_manager::{ParamType, RoomManagerMessage};
+use crate::bonk_bot::BonkBotKey;
+use crate::ConnectionsValue;
 
 use super::super::leaderboard::LeaderboardSettings;
 use super::{edit_message, help_check, loading_message, response_message};
@@ -57,7 +59,7 @@ pub async fn admins(
 
     let db = {
         let data = ctx.data.read().await;
-        data.get::<crate::DatabaseKey>().cloned()
+        data.get::<crate::ConnectionsKey>().cloned()
     }
     .ok_or(anyhow!("Failed to connect to database."))?;
 
@@ -162,7 +164,7 @@ pub async fn leaderboard(
 
     let db = {
         let data = ctx.data.read().await;
-        data.get::<crate::DatabaseKey>().cloned()
+        data.get::<crate::ConnectionsKey>().cloned()
     }
     .ok_or(anyhow!("Failed to connect to database."))?;
 
@@ -340,7 +342,7 @@ pub async fn leaderboard(
 
 pub async fn match_channel(
     ctx: &serenity::all::Context,
-    db: DatabaseValue,
+    db: ConnectionsValue,
     interaction: &CommandInteraction,
     args: Vec<&str>,
 ) -> Result<()> {
@@ -447,7 +449,7 @@ pub async fn roomlog(
 
     let db = {
         let data = ctx.data.read().await;
-        data.get::<crate::DatabaseKey>().cloned()
+        data.get::<crate::ConnectionsKey>().cloned()
     }
     .ok_or(anyhow!("Failed to connect to database."))?;
 
@@ -564,47 +566,76 @@ pub async fn open(
 
     let response = reqwest::get(&attachment.url).await?;
     let file = response.text().await?;
-    let room_parameters: RoomParameters = toml::de::from_str(&file)?;
+    let room_parameters = toml::de::from_str::<ParamType>(&file)?;
 
     let data = ctx.data.read().await;
 
     if let Some(bonk_bot) = data.get::<BonkBotKey>() {
-        match bonk_bot.open_room(ctx, room_parameters.clone()).await {
-            Ok(room_link) => {
-                interaction
-                    .edit_response(
-                        &ctx.http,
-                        edit_message(format!("Room opened: {}", room_link)),
-                    )
-                    .await?;
+        let mut error = Ok(());
+        'openroom: {
+            let (bonkroom_tx, bonkroom_rx) = oneshot::channel();
+            if let Err(e) = bonk_bot
+                .roommanager_tx
+                .send(RoomManagerMessage::MakeRoom {
+                    bonkroom_tx,
+                    room_parameters: room_parameters,
+                })
+                .await
+            {
+                error = Err(anyhow!(e));
+                break 'openroom;
+            }
 
-                let db = data.get::<crate::DatabaseKey>().cloned();
-
-                if let Some(db) = db {
-                    let channel: Vec<(i64,)> =
-                        sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
-                            .fetch_all(db.db.as_ref())
-                            .await?;
-
-                    if let Some(channel) = channel.get(0) {
-                        let channel = ChannelId::new(channel.0 as u64);
-                        channel
-                            .say(
-                                &ctx.http,
-                                format!("Room opened: {}\n{}", room_parameters.name, room_link),
-                            )
-                            .await?;
-                    }
+            let rx_reply;
+            match bonkroom_rx.await {
+                Ok(_rx_reply) => rx_reply = _rx_reply,
+                Err(e) => {
+                    error = Err(anyhow!(e));
+                    break 'openroom;
                 }
             }
-            Err(e) => {
-                interaction
-                    .edit_response(
-                        &ctx.http,
-                        edit_message(format!("Failed to make room: {}", e)),
-                    )
-                    .await?;
+            let response;
+            match rx_reply {
+                Ok(_response) => response = _response,
+                Err(e) => {
+                    error = Err(anyhow!(e));
+                    break 'openroom;
+                }
             }
+
+            interaction
+                .edit_response(
+                    &ctx.http,
+                    edit_message(format!("Room opened: {}", response.room_link)),
+                )
+                .await?;
+
+            let db = data.get::<crate::ConnectionsKey>().cloned();
+
+            if let Some(db) = db {
+                let channel: Vec<(i64,)> =
+                    sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                        .fetch_all(db.db.as_ref())
+                        .await?;
+
+                if let Some(channel) = channel.get(0) {
+                    let channel = ChannelId::new(channel.0 as u64);
+                    channel
+                        .say(
+                            &ctx.http,
+                            format!("Room opened: {}\n{}", response.name, response.room_link),
+                        )
+                        .await?;
+                }
+            }
+        }
+        if let Err(e) = error {
+            interaction
+                .edit_response(
+                    &ctx.http,
+                    edit_message(format!("Failed to make room: {}", e)),
+                )
+                .await?;
         }
     }
 
@@ -631,25 +662,46 @@ pub async fn closeall(
         .create_response(&ctx.http, loading_message())
         .await?;
 
-    let mut data = ctx.data.write().await;
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.close_all().await {
-            Ok(()) => {
-                interaction
-                    .edit_response(&ctx.http, edit_message("Rooms closed!"))
-                    .await?;
-            }
-            Err(e) => {
-                interaction
-                    .edit_response(
-                        &ctx.http,
-                        edit_message(format!("Error while closing rooms: {}", e)),
-                    )
-                    .await?;
-            }
-        }
+    let data = ctx.data.read().await;
+    let Some(bonk_bot) = data.get::<BonkBotKey>() else {
+        interaction
+            .edit_response(
+                &ctx.http,
+                edit_message("Error while closing rooms: Failed to get BonkBotKey"),
+            )
+            .await?;
+
+        return Err(anyhow!("Failed to get BonkBotKey"));
+    };
+
+    let (result_tx, result_rx) = oneshot::channel();
+    let result = bonk_bot
+        .roommanager_tx
+        .send(RoomManagerMessage::CloseAll { result_tx })
+        .await;
+
+    if let Err(e) = result {
+        interaction
+            .edit_response(
+                &ctx.http,
+                edit_message(format!("Error while closing rooms: {}", e)),
+            )
+            .await?;
     }
-    let db = data.get::<crate::DatabaseKey>().cloned();
+    if let Err(e) = result_rx.await {
+        interaction
+            .edit_response(
+                &ctx.http,
+                edit_message(format!("Error while closing rooms: {}", e)),
+            )
+            .await?;
+    } else {
+        interaction
+            .edit_response(&ctx.http, edit_message("Rooms closed!"))
+            .await?;
+    }
+
+    let db = data.get::<crate::ConnectionsKey>().cloned();
 
     if let Some(db) = db {
         let channel: Vec<(i64,)> =
@@ -685,36 +737,56 @@ pub async fn forcecloseall(
         return Ok(());
     }
 
-    let mut data = ctx.data.write().await;
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        match bonk_bot.force_close_all().await {
-            Ok(()) => {
-                interaction
-                    .create_response(&ctx.http, response_message("Rooms closed!"))
-                    .await?;
+    let data = ctx.data.read().await;
+    let Some(bonk_bot) = data.get::<BonkBotKey>() else {
+        interaction
+            .edit_response(
+                &ctx.http,
+                edit_message("Error while closing rooms: Failed to get BonkBotKey"),
+            )
+            .await?;
 
-                let db = data.get::<crate::DatabaseKey>().cloned();
+        return Err(anyhow!("Failed to get BonkBotKey"));
+    };
 
-                if let Some(db) = db {
-                    let channel: Vec<(i64,)> =
-                        sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
-                            .fetch_all(db.db.as_ref())
-                            .await?;
+    let (result_tx, result_rx) = oneshot::channel();
+    let result = bonk_bot
+        .roommanager_tx
+        .send(RoomManagerMessage::ForceCloseAll { result_tx })
+        .await;
 
-                    if let Some(channel) = channel.get(0) {
-                        let channel = ChannelId::new(channel.0 as u64);
-                        channel.say(&ctx.http, "All rooms closed!").await?;
-                    }
-                }
-            }
-            Err(e) => {
-                interaction
-                    .create_response(
-                        &ctx.http,
-                        response_message(format!("Error while closing rooms: {}", e)),
-                    )
-                    .await?;
-            }
+    if let Err(e) = result {
+        interaction
+            .edit_response(
+                &ctx.http,
+                edit_message(format!("Error while closing rooms: {}", e)),
+            )
+            .await?;
+    }
+    if let Err(e) = result_rx.await {
+        interaction
+            .edit_response(
+                &ctx.http,
+                edit_message(format!("Error while closing rooms: {}", e)),
+            )
+            .await?;
+    } else {
+        interaction
+            .edit_response(&ctx.http, edit_message("Rooms closed!"))
+            .await?;
+    }
+
+    let db = data.get::<crate::ConnectionsKey>().cloned();
+
+    if let Some(db) = db {
+        let channel: Vec<(i64,)> =
+            sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                .fetch_all(db.db.as_ref())
+                .await?;
+
+        if let Some(channel) = channel.get(0) {
+            let channel = ChannelId::new(channel.0 as u64);
+            channel.say(&ctx.http, "All rooms closed!").await?;
         }
     }
 
@@ -745,9 +817,14 @@ pub async fn shutdown(
         .create_response(&ctx.http, loading_message())
         .await?;
 
-    let mut data = ctx.data.write().await;
-    if let Some(bonk_bot) = data.get_mut::<BonkBotKey>() {
-        let _ = bonk_bot.close_all().await;
+    let data = ctx.data.read().await;
+    if let Some(bonk_bot) = data.get::<BonkBotKey>() {
+        let (result_tx, result_rx) = oneshot::channel();
+        let _ = bonk_bot
+            .roommanager_tx
+            .send(RoomManagerMessage::ForceCloseAll { result_tx })
+            .await;
+        let _ = result_rx.await;
     }
 
     time::sleep(Duration::from_secs(1)).await;
@@ -756,7 +833,7 @@ pub async fn shutdown(
         .edit_response(&ctx.http, edit_message(format!("Goodbye!")))
         .await?;
 
-    let db = data.get::<crate::DatabaseKey>().cloned();
+    let db = data.get::<crate::ConnectionsKey>().cloned();
 
     if let Some(db) = db {
         let channel: Result<i64, sqlx::Error> =

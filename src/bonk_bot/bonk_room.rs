@@ -5,7 +5,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::sleep;
 
 use anyhow::Result;
 use rand::prelude::*;
@@ -13,7 +12,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::from_value;
 use serde_json::json;
-use serenity::all::Http;
 use serenity::prelude::TypeMap;
 use tokio::select;
 use tokio::time::Interval;
@@ -24,14 +22,14 @@ use tokio::{
 };
 
 use crate::bonk_bot::events;
-use crate::bonk_bot::room_maker;
-use crate::bonk_bot::room_maker::Mode;
-use crate::bonk_bot::room_maker::Queue;
+use crate::bonk_bot::room_manager::Mode;
+use crate::bonk_bot::room_manager::Queue;
+use crate::bonk_bot::room_manager::RoomManagerMessage;
 use crate::bonk_bot::BonkBotKey;
 use crate::leaderboard::LeaderboardMessage;
 
 //use super::bonk_commands;
-use super::room_maker::RoomParameters;
+use super::room_manager::RoomParameters;
 
 ///buffer 10, blocking send
 pub enum BonkRoomMessage {
@@ -41,7 +39,6 @@ pub enum BonkRoomMessage {
 
 pub struct BonkRoom {
     pub link: String,
-    pub http: Arc<Http>,
     pub data: Arc<RwLock<TypeMap>>,
     pub rx: mpsc::Receiver<BonkRoomMessage>,
     pub client: fantoccini::Client,
@@ -120,9 +117,8 @@ impl Player {
 
 impl BonkRoom {
     ///Creates BonkRoom instance and starts intervals and timers.
-    pub fn new(
+    pub async fn new(
         link: String,
-        http: Arc<Http>,
         data: Arc<RwLock<TypeMap>>,
         rx: mpsc::Receiver<BonkRoomMessage>,
         client: fantoccini::Client,
@@ -142,20 +138,19 @@ impl BonkRoom {
             Box::pin(time::sleep(Duration::from_secs(room_parameters.idle_time)));
 
         let game_players = match room_parameters.queue {
-            room_maker::Queue::Singles => GamePlayers::Singles {
+            Queue::Singles => GamePlayers::Singles {
                 picker: None,
                 picked: None,
             },
-            room_maker::Queue::Teams => GamePlayers::Teams {
+            Queue::Teams => GamePlayers::Teams {
                 teams: vec![],
                 picker_idx: 0,
             },
-            room_maker::Queue::FFA => GamePlayers::FFA { in_game: vec![] },
+            Queue::FFA => GamePlayers::FFA { in_game: vec![] },
         };
 
         BonkRoom {
             link,
-            http,
             data,
             rx,
             client,
@@ -362,15 +357,15 @@ impl BonkRoom {
         }
 
         self.game_players = match self.room_parameters.queue {
-            room_maker::Queue::Singles => GamePlayers::Singles {
+            Queue::Singles => GamePlayers::Singles {
                 picker: None,
                 picked: None,
             },
-            room_maker::Queue::Teams => GamePlayers::Teams {
+            Queue::Teams => GamePlayers::Teams {
                 teams: vec![],
                 picker_idx: 0,
             },
-            room_maker::Queue::FFA => GamePlayers::FFA { in_game: vec![] },
+            Queue::FFA => GamePlayers::FFA { in_game: vec![] },
         };
 
         self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
@@ -777,18 +772,14 @@ impl BonkRoom {
             data.get::<BonkBotKey>().cloned()
         };
         if let Some(bonk_bot) = bonk_bot {
-            //Limited backpressure
-            select! {
-                mut bonk_rooms = bonk_bot.bonk_rooms.lock() => {
-                    let Some(room) = bonk_rooms.iter_mut().find(|room| room.link == self.link) else {
-                        println!("Bonk room failed to find room in room list.");
-                        return;
-                    };
-                    room.link = room_link.clone();
-                },
-                _ = sleep(Duration::from_secs(3)) => (),
-            }
-        };
+            let _ = bonk_bot
+                .roommanager_tx
+                .send(RoomManagerMessage::UpdateRoomLink {
+                    old: self.link.clone(),
+                    new: room_link.clone(),
+                })
+                .await;
+        }
         self.link = room_link.clone();
 
         println!("Room remade: {}", room_link);
@@ -800,26 +791,27 @@ impl BonkRoom {
     }
 
     pub async fn discord_status_message(&mut self, message: String) {
-        let db = {
+        let con = {
             let data = self.data.read().await;
-            data.get::<crate::DatabaseKey>().cloned()
+            data.get::<crate::ConnectionsKey>().cloned()
         };
 
-        let Some(db) = db else {
+        let Some(con) = con else {
             println!("Bonk room failed to get database connection.");
             return;
         };
 
         let Ok(channel_id) =
             sqlx::query_scalar::<_, i64>("SELECT id FROM channels WHERE type = 'room log'")
-                .fetch_one(db.db.as_ref())
+                .fetch_one(con.db.as_ref())
                 .await
                 .context("")
         else {
             return;
         };
         let channel_id = ChannelId::new(channel_id as u64);
-        let _ = channel_id.say(&self.http, message).await;
+
+        let _ = channel_id.say(con.http, message).await;
     }
 
     pub async fn chat(&mut self, message: String) {

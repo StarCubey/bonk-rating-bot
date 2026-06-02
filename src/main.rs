@@ -14,7 +14,7 @@ use serenity::{
     all::{
         ActivityData, Command, CommandInteraction, CreateCommand, CreateCommandOption,
         CreateInteractionResponse, CreateInteractionResponseMessage, EditInteractionResponse,
-        EventHandler, GatewayIntents, Interaction, Ready,
+        EventHandler, GatewayIntents, Http, Interaction, Ready,
     },
     async_trait,
     prelude::TypeMapKey,
@@ -22,15 +22,16 @@ use serenity::{
 
 struct Handler;
 
-pub struct DatabaseKey;
+pub struct ConnectionsKey;
 
-impl TypeMapKey for DatabaseKey {
-    type Value = DatabaseValue;
+impl TypeMapKey for ConnectionsKey {
+    type Value = ConnectionsValue;
 }
 
 #[derive(Clone)]
-pub struct DatabaseValue {
+pub struct ConnectionsValue {
     db: Arc<sqlx::PgPool>,
+    http: Arc<Http>,
 }
 
 #[async_trait]
@@ -83,7 +84,7 @@ impl EventHandler for Handler {
 
         let mut data = ctx.data.write().await;
 
-        data.insert::<BonkBotKey>(BonkBotValue::new().await);
+        data.insert::<BonkBotKey>(BonkBotValue::new(ctx.data.clone()).await);
 
         let db = sqlx::postgres::PgPool::connect(
             &dotenv::var("DATABASE_URL").expect("Missing database URL."),
@@ -97,7 +98,10 @@ impl EventHandler for Handler {
             println!("{e}");
         };
 
-        data.insert::<DatabaseKey>(DatabaseValue { db: Arc::new(db) });
+        data.insert::<ConnectionsKey>(ConnectionsValue {
+            db: Arc::new(db),
+            http: ctx.http,
+        });
     }
 
     async fn interaction_create(&self, ctx: serenity::all::Context, interaction: Interaction) {

@@ -12,7 +12,7 @@ pub async fn help(ctx: &serenity::all::Context, interaction: &CommandInteraction
 
     let db = {
         let data = ctx.data.read().await;
-        data.get::<super::DatabaseKey>().cloned()
+        data.get::<super::ConnectionsKey>().cloned()
     };
 
     let mut admin = *user == owner;
@@ -85,7 +85,7 @@ pub async fn a(
 
     let db = {
         let data = ctx.data.read().await;
-        data.get::<super::DatabaseKey>().cloned()
+        data.get::<super::ConnectionsKey>().cloned()
     };
 
     if let Some(db) = db {

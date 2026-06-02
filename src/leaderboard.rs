@@ -4,14 +4,14 @@ use std::{f64, pin::Pin, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use serenity::all::ChannelId;
+use serenity::{all::ChannelId, prelude::TypeMap};
 use sqlx::{
     prelude::FromRow,
     types::time::{Date, OffsetDateTime},
     Pool, Postgres, Transaction,
 };
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, RwLock},
     time,
 };
 
@@ -63,7 +63,7 @@ pub struct PlayerData {
 pub struct Leaderboard {
     rx: mpsc::Receiver<LeaderboardMessage>,
     db: Arc<Pool<Postgres>>,
-    pub ctx: serenity::all::Context,
+    pub data: Arc<RwLock<TypeMap>>,
     pub settings: LeaderboardSettings,
     id: i64,
     season: i32,
@@ -80,7 +80,7 @@ const BONK_LB_DISPLAYED_PLACEMENTS: i32 = 5;
 impl Leaderboard {
     pub async fn new(
         rx: mpsc::Receiver<LeaderboardMessage>,
-        ctx: serenity::all::Context,
+        data: Arc<RwLock<TypeMap>>,
         settings: LeaderboardSettings,
     ) -> Result<Leaderboard> {
         let db;
@@ -88,9 +88,9 @@ impl Leaderboard {
         let season;
 
         {
-            let data = ctx.data.read().await;
+            let data = data.read().await;
             db = data
-                .get::<crate::DatabaseKey>()
+                .get::<crate::ConnectionsKey>()
                 .cloned()
                 .ok_or(anyhow!("Failed to connect to database."))?
                 .db;
@@ -128,7 +128,7 @@ impl Leaderboard {
         Ok(Leaderboard {
             rx,
             db,
-            ctx,
+            data,
             settings,
             id,
             season,
@@ -268,8 +268,18 @@ impl Leaderboard {
                 .fetch_one(&mut **trans)
                 .await?;
         if let Some(channel_id) = channel_id {
+            let con = {
+                let data = self.data.read().await;
+                data.get::<crate::ConnectionsKey>().cloned()
+            };
+
+            let Some(con) = con else {
+                println!("Leaderboard failed to get database connection.");
+                return Ok(match_string.1);
+            };
+
             let channel_id = ChannelId::new(channel_id as u64);
-            channel_id.say(&self.ctx.http, match_string.0).await?;
+            channel_id.say(con.http, match_string.0).await?;
         }
 
         self.needs_update = true;
@@ -324,9 +334,21 @@ impl Leaderboard {
                 .fetch_one(self.db.as_ref())
                 .await?;
 
+        let con = {
+            let data = self.data.read().await;
+            data.get::<crate::ConnectionsKey>().cloned()
+        };
+
+        let Some(con) = con else {
+            println!("Leaderboard failed to get database connection.");
+            return Ok(());
+        };
+
         let mut new_messages: Vec<i64> = vec![];
         for (i, message_id) in messages.iter().enumerate() {
-            let message = channel_id.message(&self.ctx.http, *message_id as u64).await;
+            let message = channel_id
+                .message(con.http.clone(), *message_id as u64)
+                .await;
 
             if let Ok(message) = message {
                 if let Some(lb_string) = lb_strings.get(i) {
@@ -334,16 +356,16 @@ impl Leaderboard {
                         lb_strings.remove(i); //panics
                         new_messages.push(*message_id);
                     } else {
-                        message.delete(&self.ctx.http).await?;
+                        message.delete(con.http.clone()).await?;
                     }
                 } else {
-                    message.delete(&self.ctx.http).await?;
+                    message.delete(con.http.clone()).await?;
                 }
             }
         }
 
         for lb_string in lb_strings {
-            new_messages.push(channel_id.say(&self.ctx.http, lb_string).await?.id.get() as i64);
+            new_messages.push(channel_id.say(con.http.clone(), lb_string).await?.id.get() as i64);
         }
         sqlx::query("UPDATE leaderboard SET messages = $1 WHERE id = $2")
             .bind(new_messages)

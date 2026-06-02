@@ -8,7 +8,7 @@ use crate::{
     bonk_bot::{
         bonk_commands,
         bonk_room::{GamePlayers, State},
-        room_maker::{Mode, Queue},
+        room_manager::{Mode, Queue},
     },
     leaderboard::LeaderboardMessage,
 };

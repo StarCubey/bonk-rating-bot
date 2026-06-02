@@ -53,6 +53,7 @@ The "/elo a open" command takes a TOML config file as an argument. Below is an e
 ```toml
 # Required
 
+type = "normal"
 name = "Test room"
 max_players = 8
 # min_level = 0 is currently not supported.
@@ -101,6 +102,71 @@ password = ""
 unlisted = true
 # Leaderboard abbreviation if a leaderboard is used for rated matches.
 leaderboard = ""
+```
+
+Dayrooms are rooms that change each day. When there's a list of n possible rooms, the room chosen is based on the number of days since the unix epoch mod n.
+
+```toml
+type = "dayroom"
+
+[[dayroom]]
+name = "Classic room"
+max_players = 8
+# min_level = 0 is currently not supported.
+min_level = 1
+# "Football", "Simple", "DeathArrows", "Arrows", "Grapple", "VTOL", "Classic"
+mode = "Classic"
+# "Singles", "Teams", "FFA"
+queue = "Singles"
+rounds = 5
+# List of maps from raw map data. You can get maps from your favorites with sgrAPI.getFav(0);.
+maps = [
+"""
+{
+  "id": 123,
+  "name": "Simple 1v1",
+  "authorname": "GudStrat",
+  "leveldata": "ILDuJAhZIawhiQEVgGkCqAmANgFwGMBxADxwEkARAMSwFlVyAlAZgDVYMWmBPATQAaqGAEsArhACiAVlTRgACwASAEwDqTACoqlAKQUqkwAKahJCAMIgAHCgTngGSKGGJklV0a-efSByAA5NjVpMT41AEYcAC0LSE0AQyJqUGiBAHoAN3Sc3JyodIB2PLyWLJLc4CIAWwA2FQBzIzkCcDo6AT4ScmpIAGdBJmqAIxZdPF9J7wAFAGofbO90gAYALzp1zbpwKd29-YPJh2RJaBP5f2ALUGp4JEpgAHlPQ69Ic+BPNk1iahZh2CQaJeUCUO6vHxOT6XahcSAGLAAFkQQA",
+  "publisheddate": "2020-05-05 16:59:52",
+  "vu": 72147,
+  "vd": 14943,
+  "remixname": "",
+  "remixauthor": "",
+  "remixdb": 1,
+  "remixid": 0
+}
+""",
+]
+
+[[dayroom]]
+
+name = "Grapple room"
+max_players = 8
+# min_level = 0 is currently not supported.
+min_level = 1
+# "Football", "Simple", "DeathArrows", "Arrows", "Grapple", "VTOL", "Classic"
+mode = "Grapple"
+# "Singles", "Teams", "FFA"
+queue = "Singles"
+rounds = 5
+# List of maps from raw map data. You can get maps from your favorites with sgrAPI.getFav(0);.
+maps = [
+"""
+{
+  "id": 123,
+  "name": "Simple 1v1",
+  "authorname": "GudStrat",
+  "leveldata": "ILDuJAhZIawhiQEVgGkCqAmANgFwGMBxADxwEkARAMSwFlVyAlAZgDVYMWmBPATQAaqGAEsArhACiAVlTRgACwASAEwDqTACoqlAKQUqkwAKahJCAMIgAHCgTngGSKGGJklV0a-efSByAA5NjVpMT41AEYcAC0LSE0AQyJqUGiBAHoAN3Sc3JyodIB2PLyWLJLc4CIAWwA2FQBzIzkCcDo6AT4ScmpIAGdBJmqAIxZdPF9J7wAFAGofbO90gAYALzp1zbpwKd29-YPJh2RJaBP5f2ALUGp4JEpgAHlPQ69Ic+BPNk1iahZh2CQaJeUCUO6vHxOT6XahcSAGLAAFkQQA",
+  "publisheddate": "2020-05-05 16:59:52",
+  "vu": 72147,
+  "vd": 14943,
+  "remixname": "",
+  "remixauthor": "",
+  "remixdb": 1,
+  "remixid": 0
+}
+""",
+]
 ```
 
 ## Leaderbaord Config Template
