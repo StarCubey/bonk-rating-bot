@@ -3,6 +3,7 @@ use anyhow::{anyhow, Result};
 use fantoccini::ClientBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use serenity::all::ChannelId;
 use serenity::prelude::TypeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -12,6 +13,7 @@ use tokio::select;
 use tokio::sync::mpsc::WeakSender;
 use tokio::sync::oneshot;
 use tokio::sync::{mpsc, RwLock};
+use tokio::time::{self, Interval};
 use tokio::time::{sleep, Instant};
 
 use crate::bonk_bot::bonk_room::{BonkRoom, BonkRoomMessage};
@@ -21,6 +23,7 @@ const ROOM_RATE_LIMIT: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct RoomData {
+    name: String,
     link: String,
     parameters: ParamType,
     tx: mpsc::Sender<BonkRoomMessage>,
@@ -164,6 +167,8 @@ pub struct RoomManager {
     mods: String,
     rooms: Vec<RoomData>,
     leaderboards_tx: Vec<(i64, WeakSender<LeaderboardMessage>)>,
+    update_interval: Interval,
+    last_dayroom_check: u64,
 }
 
 impl RoomManager {
@@ -179,6 +184,14 @@ impl RoomManager {
         let mut injector = String::new();
         injector_file.read_to_string(&mut injector).await?;
 
+        let mut update_interval = time::interval(Duration::from_mins(5));
+        update_interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        let days = days.as_secs() / (60 * 60 * 24);
+
         Ok(RoomManager {
             rx,
             data,
@@ -186,36 +199,127 @@ impl RoomManager {
             mods: format!("{}{}", injector, sgr_api),
             rooms: vec![],
             leaderboards_tx: vec![],
+            update_interval,
+            last_dayroom_check: days,
         })
     }
 
     pub async fn run(&mut self) {
-        while let Some(message) = self.rx.recv().await {
-            match message {
-                RoomManagerMessage::MakeRoom {
-                    bonkroom_tx,
-                    room_parameters,
-                } => {
-                    self.make_room(bonkroom_tx, room_parameters).await;
-                }
-                RoomManagerMessage::UpdateRoomLink { old, new } => {
-                    match self.rooms.iter_mut().find(|room| room.link == old) {
-                        Some(room) => {
-                            room.link = new;
+        loop {
+            select! {
+                biased;
+                _ = self.update_interval.tick()  => self.update().await,
+                Some(message) = self.rx.recv() => {
+                    match message {
+                        RoomManagerMessage::MakeRoom {
+                            bonkroom_tx,
+                            room_parameters,
+                        } => {
+                            self.make_room(bonkroom_tx, room_parameters).await;
                         }
-                        None => {
-                            println!("Failed to update room link. Couldn't find {}", old);
+                        RoomManagerMessage::UpdateRoomLink { old, new } => {
+                            match self.rooms.iter_mut().find(|room| room.link == old) {
+                                Some(room) => {
+                                    room.link = new;
+                                }
+                                None => {
+                                    println!("Failed to update room link. Couldn't find {}", old);
+                                }
+                            }
+                        }
+                        RoomManagerMessage::CloseAll { result_tx } => {
+                            let _ = result_tx.send(self.close_all().await);
+                        }
+                        RoomManagerMessage::ForceCloseAll { result_tx } => {
+                            let _ = result_tx.send(self.force_close_all().await);
                         }
                     }
                 }
-                RoomManagerMessage::CloseAll { result_tx } => {
-                    let _ = result_tx.send(self.close_all().await);
-                }
-                RoomManagerMessage::ForceCloseAll { result_tx } => {
-                    let _ = result_tx.send(self.force_close_all().await);
+            }
+        }
+    }
+
+    async fn update(&mut self) {
+        for i in (0..self.rooms.len()).rev() {
+            if self.rooms[i].tx.is_closed() {
+                let params = self.rooms[i].parameters.clone();
+                self.rooms.remove(i);
+
+                let (bonkroom_tx, bonkroom_rx) = oneshot::channel();
+                self.make_room(bonkroom_tx, params).await;
+
+                let response = bonkroom_rx.await;
+                let Ok(Ok(response)) = response else {
+                    return;
+                };
+
+                self.status_message(format!(
+                    "Room remade: {}\n{}",
+                    response.name, response.room_link
+                ))
+                .await;
+            }
+        }
+
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        let days = days.as_secs() / (60 * 60 * 24);
+        if days > self.last_dayroom_check {
+            self.last_dayroom_check = days;
+
+            for i in (0..self.rooms.len()).rev() {
+                if let ParamType::DayRoom(ref params) = self.rooms[i].parameters.clone() {
+                    let _ = self.rooms[i].tx.send(BonkRoomMessage::Close).await;
+                    self.rooms[i].tx.closed().await;
+
+                    self.status_message(format!("Room closed: {}", self.rooms[i].name))
+                        .await;
+
+                    self.rooms.remove(i);
+
+                    let (bonkroom_tx, bonkroom_rx) = oneshot::channel();
+                    self.make_room(bonkroom_tx, ParamType::DayRoom(params.clone()))
+                        .await;
+
+                    let response = bonkroom_rx.await;
+                    let Ok(Ok(response)) = response else {
+                        return;
+                    };
+
+                    self.status_message(format!(
+                        "Room opened: {}\n{}",
+                        response.name, response.room_link
+                    ))
+                    .await;
                 }
             }
         }
+    }
+
+    async fn status_message(&self, message: String) {
+        let con = {
+            let data = self.data.read().await;
+            data.get::<crate::ConnectionsKey>().cloned()
+        };
+
+        let Some(con) = con else {
+            return;
+        };
+        let channel: Result<Vec<(i64,)>, sqlx::Error> =
+            sqlx::query_as("SELECT id FROM channels WHERE type = 'room log'")
+                .fetch_all(con.db.as_ref())
+                .await;
+
+        let Ok(channel) = channel else {
+            return;
+        };
+
+        let Some(channel) = channel.get(0) else {
+            return;
+        };
+        let channel = ChannelId::new(channel.0 as u64);
+        let _ = channel.say(con.http, message).await;
     }
 
     async fn make_room(
@@ -310,6 +414,7 @@ impl RoomManager {
                             }));
 
                             self.rooms.push(RoomData {
+                                name: params.name.clone(),
                                 link: room_link.clone(),
                                 parameters: room_parameters,
                                 tx,
