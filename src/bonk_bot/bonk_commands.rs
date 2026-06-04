@@ -350,7 +350,7 @@ pub async fn strike(room: &mut BonkRoom, id: i32) {
                 )));
                 room.warning_step = 0;
                 room.state = State::Ready;
-                room.chat("All strikes have been used. Use !r to start.".to_string())
+                room.chat("All strikes have been used. Use -r to start.".to_string())
                     .await;
             } else if remaining_maps.len() < 2 {
                 room.transition_timer = Box::pin(time::sleep(Duration::from_secs(
@@ -358,7 +358,7 @@ pub async fn strike(room: &mut BonkRoom, id: i32) {
                 )));
                 room.warning_step = 0;
                 room.state = State::Ready;
-                room.chat("All other maps have been struck. Use !r to start.".to_string())
+                room.chat("All other maps have been struck. Use -r to start.".to_string())
                     .await;
             } else {
                 //2 second double strike prevention.

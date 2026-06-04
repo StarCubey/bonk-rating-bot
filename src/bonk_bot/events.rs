@@ -31,7 +31,7 @@ pub async fn on_transition_timer_expired(room: &mut BonkRoom) {
             )));
             room.warning_step = 0;
             room.state = State::Ready;
-            room.chat("The current map has been selected. Use !r to start.".to_string())
+            room.chat("The current map has been selected. Use -r to start.".to_string())
                 .await;
         }
         State::Ready => {
@@ -126,7 +126,7 @@ async fn transition_idle(room: &mut BonkRoom) {
                 room.warning_step = 0;
                 room.state = State::Pick;
                 room.chat(format!(
-                    "{}, pick an opponent with !p abbreviation or !any for a random opponent.",
+                    "{}, pick an opponent with -p abbreviation or -any for a random opponent.",
                     picker.name
                 ))
                 .await;
@@ -192,7 +192,7 @@ async fn transition_idle(room: &mut BonkRoom) {
                 room.state = State::Pick;
                 if let Some(player) = captains.get(0) {
                     room.chat(format!(
-                        "{}, pick a teammate with !p abbreviation or !any for a random teammate.",
+                        "{}, pick a teammate with -p abbreviation or -any for a random teammate.",
                         player.name
                     ))
                     .await;
@@ -316,19 +316,19 @@ pub async fn on_message(room: &mut BonkRoom, message: String) {
 
             let new_message;
             if let Some(command) = chat_message.strip_prefix("|") {
-                new_message = format!("{}{}", "!", command);
+                new_message = format!("{}{}", "-", command);
                 chat_message = new_message.as_str();
-            } else if let Some(command) = chat_message.strip_prefix("-") {
-                new_message = format!("{}{}", "!", command);
+            } else if let Some(command) = chat_message.strip_prefix("!") {
+                new_message = format!("{}{}", "-", command);
                 chat_message = new_message.as_str();
             }
 
-            if let Some(command) = chat_message.strip_prefix("!") {
+            if let Some(command) = chat_message.strip_prefix("-") {
                 let mut command: Vec<&str> = command.split(' ').collect();
 
                 let help_string = concat!(
-                    "!discord, !leaderboard, !elo player !queue (lists the queue), ",
-                    "!reset (votes to reset game with same score), !cancel (votes to cancel game)"
+                    "-discord, -leaderboard, -elo player -queue (lists the queue), ",
+                    "-reset (votes to reset game with same score), -cancel (votes to cancel game)"
                 )
                 .to_string();
                 if command.len() == 0 {

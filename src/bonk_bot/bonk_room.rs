@@ -382,7 +382,7 @@ impl BonkRoom {
             )));
             self.warning_step = 0;
             self.state = State::Ready;
-            self.chat("Use !r to start.".to_string()).await;
+            self.chat("Use -r to start.".to_string()).await;
             return;
         }
 
@@ -420,7 +420,7 @@ impl BonkRoom {
             )));
             self.warning_step = 0;
             self.state = State::Ready;
-            self.chat("Use !r to start.".to_string()).await;
+            self.chat("Use -r to start.".to_string()).await;
         } else {
             self.transition_timer = Box::pin(time::sleep(Duration::from_secs(
                 self.room_parameters.strike_time,
@@ -429,7 +429,7 @@ impl BonkRoom {
             self.state = State::MapSelection;
 
             if let State::MapSelection = self.state {
-                self.chat("Use !s to roll another map or use !r to start.".to_string())
+                self.chat("Use -s to roll another map or use -r to start.".to_string())
                     .await;
             }
         }
@@ -473,7 +473,7 @@ impl BonkRoom {
                 if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
                     self.warning_step = 1;
                     self.chat(format!(
-                        "{} left to pick. Use !p abbreviation",
+                        "{} left to pick. Use -p abbreviation",
                         sec_to_string(warn)
                     ))
                     .await;
@@ -484,7 +484,7 @@ impl BonkRoom {
                 if self.warning_step < 1 && remaining_time < Duration::from_secs(warn) {
                     self.warning_step = 1;
                     self.chat(format!(
-                        "Use !r to start. {} until the match is cancelled.",
+                        "Use -r to start. {} until the match is cancelled.",
                         sec_to_string(warn)
                     ))
                     .await;

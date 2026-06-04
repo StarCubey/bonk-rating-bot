@@ -3,17 +3,17 @@
 ## Bonk.io Commands
 
 ```
-!help: Lists commands.
-!ping: Pong!
-!queue, !q: Checks the queue. Spots will be held for some time when players leave.
-!leaderboard, !lb: Shows the first 5 placements.
-!elo <name>: Shows your own elo or the elo of a player in the room.
-!pick, !p <name>: When prompted, this command chooses and opponent to play against.
-!any: Picks a random player.
-!ready, !r: Indicaates that you're ready to play before a game.
-!skip, !sk: Opts out of picking an opponent moving you to the end of the queue.
-!reset, !re: Resets the current round with the same score.
-!cancel, !c: Votes to cancel the game without recording the result.
+-help: Lists commands.
+-ping: Pong!
+-queue, -q: Checks the queue. Spots will be held for some time when players leave.
+-leaderboard, -lb: Shows the first 5 placements.
+-elo <name>: Shows your own elo or the elo of a player in the room.
+-pick, -p <name>: When prompted, this command chooses and opponent to play against.
+-any: Picks a random player.
+-ready, -r: Indicaates that you're ready to play before a game.
+-skip, -sk: Opts out of picking an opponent moving you to the end of the queue.
+-reset, -re: Resets the current round with the same score.
+-cancel, -c: Votes to cancel the game without recording the result.
 ```
 
 ## Discord Base Commands
