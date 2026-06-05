@@ -674,7 +674,7 @@ pub async fn on_game_end(room: &mut BonkRoom, mut winner: Option<usize>, tie: bo
                                 .execute(
                                     "\
                                 if(sgrAPI.footballState.scores[3] > sgrAPI.footballState.scores[2]) return 3;\
-                                if(sgrAPI.footballState.scores[2] < sgrAPI.footballState.scores[3]) return 2;\
+                                if(sgrAPI.footballState.scores[2] > sgrAPI.footballState.scores[3]) return 2;\
                                 return 0;\
                                 ",
                                     vec![],
